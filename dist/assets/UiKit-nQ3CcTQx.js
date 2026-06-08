@@ -1,0 +1,1 @@
+import{k as e,c as a}from"./index-CpAwEeFR.js";const n={class:"inline-block h-5 w-5 animate-spin rounded-full border-2 border-line border-t-accent align-[-3px]",role:"status","aria-label":"Yuklanmoqda"},c={__name:"UiKit",setup(r){return(o,t)=>(e(),a("span",n))}};export{c as _};
