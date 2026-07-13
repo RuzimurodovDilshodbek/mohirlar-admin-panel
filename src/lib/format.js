@@ -86,6 +86,38 @@ const LABELS = {
   onsite: 'Ofisda',
   hybrid: 'Gibrid',
   remote: 'Masofaviy',
+  // application statuses
+  submitted: 'Yuborilgan',
+  applied: 'Ariza berilgan',
+  screening: 'Saralash',
+  shortlisted: 'Qisqa roʻyxat',
+  interview: 'Suhbat',
+  offer: 'Taklif',
+  hired: 'Ishga olindi',
+  withdrawn: 'Qaytarib olingan',
+  viewed: 'Koʻrilgan',
+  // subscription statuses
+  trialing: 'Sinov muddati',
+  trial: 'Sinov muddati',
+  past_due: 'Toʻlov kechikkan',
+  canceled: 'Bekor qilingan',
+  cancelled: 'Bekor qilingan',
+  incomplete: 'Tugallanmagan',
+  grace: 'Imtiyoz muddati',
+  // payment statuses
+  paid: 'Toʻlangan',
+  succeeded: 'Muvaffaqiyatli',
+  success: 'Muvaffaqiyatli',
+  failed: 'Muvaffaqiyatsiz',
+  refunded: 'Qaytarilgan',
+  processing: 'Jarayonda',
+  // funnel stages
+  job_views: 'Koʻrishlar',
+  applications_total: 'Arizalar',
+  interview_stage: 'Suhbat',
+  // companies
+  verified: 'Tasdiqlangan',
+  unverified: 'Tasdiqlanmagan',
 };
 
 export function label(key) {
@@ -99,6 +131,18 @@ const TONES = {
   suspended: 'danger', rejected: 'danger', deleted: 'danger', dismissed: 'neutral',
   draft: 'neutral', paused: 'neutral', closed: 'neutral', expired: 'neutral',
   admin: 'ai', moderator: 'info', employer: 'accent', candidate: 'neutral',
+  // application statuses
+  hired: 'good', offer: 'good', shortlisted: 'info', interview: 'ai',
+  submitted: 'neutral', applied: 'neutral', screening: 'warn',
+  withdrawn: 'neutral', viewed: 'neutral',
+  // subscription statuses
+  trialing: 'info', trial: 'info', past_due: 'warn', canceled: 'neutral',
+  cancelled: 'neutral', incomplete: 'warn', grace: 'warn',
+  // payment statuses
+  paid: 'good', succeeded: 'good', success: 'good', failed: 'danger',
+  refunded: 'neutral', processing: 'info',
+  // companies
+  verified: 'good', unverified: 'neutral',
 };
 export function tone(key) {
   return TONES[key] ?? 'neutral';
@@ -171,6 +215,40 @@ export function timeAgo(iso) {
   if (days < 30) return `${days} kun oldin`;
   return fmtDate(iso);
 }
+
+// ─── Numbers ───
+/** Group digits with locale separators: 12345 → "12 345". */
+export function fmtNum(n) {
+  if (n == null || isNaN(n)) return '—';
+  return new Intl.NumberFormat('uz-UZ').format(n);
+}
+/** Full money with thousands grouping: 1500000 → "1 500 000 soʻm". */
+export function somFull(amount) {
+  if (amount == null || isNaN(amount)) return '—';
+  return `${new Intl.NumberFormat('uz-UZ').format(Math.round(amount))} soʻm`;
+}
+/** Signed percentage badge text, e.g. +12%. */
+export function pct(part, whole) {
+  if (!whole) return '0%';
+  return `${Math.round((part / whole) * 100)}%`;
+}
+
+// ─── Localised reference name (falls back across locales) ───
+export function refName(row, locale = 'uz') {
+  if (!row) return '—';
+  return row[`name_${locale}`] || row.name || row.name_uz || row.name_ru || row.name_en || '—';
+}
+
+// Shared chart palette (mirrors the theme tokens) — used by the SVG charts.
+export const CHART_COLORS = {
+  accent: '#0b6e5f',
+  info: '#1e5eff',
+  ai: '#7a4dff',
+  warn: '#c2410c',
+  good: '#1f8a55',
+  neutral: '#b5b0a4',
+  ink: '#43403a',
+};
 
 /** Parse the `cursor` value out of a Laravel pagination `links.next` URL. */
 export function cursorFromUrl(url) {

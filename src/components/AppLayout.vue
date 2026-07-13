@@ -1,10 +1,12 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { RouterView, useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useModerationStore } from '@/stores/moderation';
 import { label } from '@/lib/format';
 
 const auth = useAuthStore();
+const moderation = useModerationStore();
 const route = useRoute();
 const router = useRouter();
 const mobileOpen = ref(false);
@@ -12,11 +14,23 @@ const mobileOpen = ref(false);
 const NAV = [
   { name: 'dashboard', label: 'Boshqaruv paneli', icon: 'M3 11l9-7 9 7M5 10v10h14V10' },
   { name: 'users', label: 'Foydalanuvchilar', icon: 'M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8M12 8a4 4 0 100-8 4 4 0 000 8' },
-  { name: 'jobs', label: 'Vakansiyalar', icon: 'M3 7h18v13H3zM9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M3 12h18' },
-  { name: 'verifications', label: 'Tasdiqlashlar', icon: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4' },
-  { name: 'reports', label: 'Shikoyatlar', icon: 'M5 21V4M5 4h11l-2 4 2 4H5' },
+  { name: 'jobs', label: 'Vakansiyalar', icon: 'M3 7h18v13H3zM9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M3 12h18', badge: 'jobs' },
+  { name: 'companies', label: 'Kompaniyalar', icon: 'M3 21h18M6 21V7l6-4 6 4v14M10 9h.01M14 9h.01M10 13h.01M14 13h.01M10 17h.01M14 17h.01' },
+  { name: 'verifications', label: 'Tasdiqlashlar', icon: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4', badge: 'verifications' },
+  { name: 'reports', label: 'Shikoyatlar', icon: 'M5 21V4M5 4h11l-2 4 2 4H5', badge: 'reports' },
+  { name: 'commerce', label: 'Moliya va obunalar', icon: 'M3 7h18v10H3zM3 11h18M7 15h3' },
+  { name: 'content', label: 'Maʼlumotnomalar', icon: 'M7 7h13M7 12h13M7 17h13M3.5 7h.01M3.5 12h.01M3.5 17h.01' },
   { name: 'audit', label: 'Audit jurnali', icon: 'M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9zM14 3v6h6M8 13h8M8 17h5' },
 ];
+
+function badgeCount(item) {
+  if (!item.badge) return 0;
+  return moderation.byNav[item.badge] || 0;
+}
+
+onMounted(() => {
+  moderation.refresh();
+});
 
 async function logout() {
   await auth.logout();
@@ -50,11 +64,16 @@ async function logout() {
             : 'text-ink-2 hover:bg-elev'"
           @click="mobileOpen = false"
         >
-          <svg viewBox="0 0 24 24" class="h-[18px] w-[18px]" fill="none" stroke="currentColor"
+          <svg viewBox="0 0 24 24" class="h-[18px] w-[18px] shrink-0" fill="none" stroke="currentColor"
             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
             <path :d="item.icon" />
           </svg>
-          {{ item.label }}
+          <span class="flex-1">{{ item.label }}</span>
+          <span
+            v-if="badgeCount(item)"
+            class="shrink-0 min-w-5 h-5 px-1.5 inline-flex items-center justify-center rounded-full text-[11px] font-semibold"
+            :class="route.name === item.name ? 'bg-white/20 text-white' : 'bg-warn-soft text-warn'"
+          >{{ badgeCount(item) > 99 ? '99+' : badgeCount(item) }}</span>
         </RouterLink>
       </nav>
 
