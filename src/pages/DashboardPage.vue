@@ -73,11 +73,12 @@ const trendLabels = computed(() => {
 });
 const hasTrend = computed(() => trendSeries.value.some((se) => se.data.length));
 
+const byRole = computed(() => users.value.by_role ?? users.value);
 const roleSegments = computed(() => [
-  { label: label('candidate'), value: users.value.candidates ?? 0, color: CHART_COLORS.neutral },
-  { label: label('employer'), value: users.value.employers ?? 0, color: CHART_COLORS.accent },
-  { label: label('moderator'), value: users.value.moderators ?? 0, color: CHART_COLORS.info },
-  { label: label('admin'), value: users.value.admins ?? 0, color: CHART_COLORS.ai },
+  { label: label('candidate'), value: byRole.value.candidate ?? users.value.candidates ?? 0, color: CHART_COLORS.neutral },
+  { label: label('employer'), value: byRole.value.employer ?? users.value.employers ?? 0, color: CHART_COLORS.accent },
+  { label: label('moderator'), value: byRole.value.moderator ?? users.value.moderators ?? 0, color: CHART_COLORS.info },
+  { label: label('admin'), value: byRole.value.admin ?? users.value.admins ?? 0, color: CHART_COLORS.ai },
 ]);
 
 const funnelStages = computed(() => {
@@ -146,11 +147,11 @@ const TONE = { warn: 'bg-warn-soft text-warn', info: 'bg-info-soft text-info', d
         <!-- KPI cards -->
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <StatCard :value="fmtNum(users.total ?? 0)" label="Foydalanuvchilar" tone="accent" :icon="ICONS.users"
-            :sub="`${fmtNum(users.new_7d ?? 0)} yangi · 7 kun`" :trend="users.new_7d != null ? `+${fmtNum(users.new_7d)}` : ''" />
+            :sub="`${fmtNum((users.new_7d ?? users.new_last_7d) ?? 0)} yangi · 7 kun`" :trend="(users.new_7d ?? users.new_last_7d) != null ? `+${fmtNum((users.new_7d ?? users.new_last_7d))}` : ''" />
           <StatCard :value="fmtNum(jobs.active ?? 0)" label="Faol vakansiyalar" tone="good" :icon="ICONS.jobs"
             :sub="`${fmtNum(jobs.pending_review ?? 0)} koʻrib chiqilmoqda`" />
           <StatCard :value="fmtNum(apps.total ?? 0)" label="Arizalar" tone="info" :icon="ICONS.apps"
-            :sub="`${fmtNum(apps.new_7d ?? 0)} yangi · 7 kun`" :trend="apps.new_7d != null ? `+${fmtNum(apps.new_7d)}` : ''" trendTone="info" />
+            :sub="`${fmtNum((apps.new_7d ?? apps.new_last_7d) ?? 0)} yangi · 7 kun`" :trend="(apps.new_7d ?? apps.new_last_7d) != null ? `+${fmtNum((apps.new_7d ?? apps.new_last_7d))}` : ''" trendTone="info" />
           <StatCard :value="som(subs.mrr ?? 0)" label="Oylik daromad (MRR)" tone="ai" :icon="ICONS.money"
             :sub="`${som(subs.revenue_total ?? 0)} jami · ${fmtNum(subs.active_count ?? 0)} obuna`" />
           <StatCard :value="fmtNum(companies.total ?? 0)" label="Kompaniyalar" tone="warn" :icon="ICONS.company"
