@@ -1,7 +1,8 @@
 <script setup>
-import { ref, watch } from 'vue';
-import { UsersApi } from '@/lib/api';
+import { ref, watch, computed } from 'vue';
+import { UsersApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
+import { useAuthStore } from '@/stores/auth';
 import { USER_ROLES, USER_STATUSES, label, fmtDate } from '@/lib/format';
 import { toastOk, toastErr } from '@/lib/toast';
 import DataState from '@/components/DataState.vue';
@@ -11,6 +12,10 @@ import ModalDialog from '@/components/ModalDialog.vue';
 import UiKit from '@/components/UiKit.vue';
 
 const list = useCursorList((params) => UsersApi.list(params));
+const auth = useAuthStore();
+// Only a super-admin may change a role — the backend rejects it for moderators
+// (UserController::update), so don't offer the control at all.
+const canEditRole = computed(() => auth.isAdmin);
 
 const role = ref('all');
 const status = ref('all');
@@ -54,7 +59,7 @@ function close() {
 async function save() {
   if (saving.value || !selected.value) return;
   const body = {};
-  if (editRole.value !== selected.value.role) body.role = editRole.value;
+  if (canEditRole.value && editRole.value !== selected.value.role) body.role = editRole.value;
   if (editStatus.value !== selected.value.status) body.status = editStatus.value;
   if (!Object.keys(body).length) { close(); return; }
   if (reason.value.trim()) body.reason = reason.value.trim();
@@ -65,7 +70,7 @@ async function save() {
     toastOk('Foydalanuvchi yangilandi');
     selected.value = null;
   } catch (e) {
-    toastErr(e?.response?.data?.error?.message || 'Saqlashda xatolik');
+    toastErr(toApiError(e, 'Saqlashda xatolik').message);
   } finally {
     saving.value = false;
   }
@@ -149,12 +154,19 @@ async function save() {
           <div><dt class="text-ink-3 text-xs">Telefon tasdiqi</dt><dd class="text-ink">{{ selected.phone_verified_at ? fmtDate(selected.phone_verified_at) : 'Yoʻq' }}</dd></div>
         </dl>
 
-        <label class="block">
+        <label v-if="canEditRole" class="block">
           <span class="text-xs font-semibold uppercase tracking-wide text-ink-3">Rol</span>
           <select v-model="editRole" class="mt-1.5 w-full h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent">
             <option v-for="r in USER_ROLES" :key="r" :value="r">{{ label(r) }}</option>
           </select>
         </label>
+        <div v-else class="block">
+          <span class="text-xs font-semibold uppercase tracking-wide text-ink-3">Rol</span>
+          <div class="mt-1.5 flex h-11 items-center gap-2 rounded-xl border border-line bg-elev/50 px-3 text-sm text-ink-2">
+            {{ label(selected.role) }}
+            <span class="text-xs text-ink-4">— faqat administrator oʻzgartiradi</span>
+          </div>
+        </div>
 
         <label class="block">
           <span class="text-xs font-semibold uppercase tracking-wide text-ink-3">Holat</span>

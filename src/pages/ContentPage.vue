@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, watch, computed } from 'vue';
-import { ReferenceApi } from '@/lib/api';
+import { ReferenceApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
 import { refName, fmtNum } from '@/lib/format';
 import { toastOk, toastErr } from '@/lib/toast';
@@ -11,18 +11,23 @@ import UiKit from '@/components/UiKit.vue';
 
 // Config-driven reference CMS. Each kind maps to a public read endpoint and the
 // admin write endpoints POST/PATCH/DELETE /admin/reference/{kind}.
+// The field lists mirror AdminReferenceController's validation rules 1:1 —
+// every `required` rule has an input here, or creation fails server-side.
 const KINDS = {
   categories: {
     label: 'Kategoriyalar',
     empty: 'Kategoriyalar topilmadi',
     searchable: true,
     fields: [
+      { key: 'slug', label: 'Slug', required: true },
       { key: 'name_uz', label: 'Nomi (UZ)', required: true },
-      { key: 'name_ru', label: 'Nomi (RU)' },
-      { key: 'name_en', label: 'Nomi (EN)' },
-      { key: 'slug', label: 'Slug' },
+      { key: 'name_ru', label: 'Nomi (RU)', required: true },
+      { key: 'name_en', label: 'Nomi (EN)', required: true },
+      { key: 'parent_id', label: 'Ota kategoriya ID', type: 'number' },
       { key: 'icon', label: 'Ikonka nomi' },
       { key: 'color', label: 'Rang', type: 'color' },
+      { key: 'sort_order', label: 'Tartib raqami', type: 'number' },
+      { key: 'is_active', label: 'Faol', type: 'bool' },
     ],
   },
   skills: {
@@ -30,10 +35,13 @@ const KINDS = {
     empty: 'Koʻnikmalar topilmadi',
     searchable: true,
     fields: [
-      { key: 'name_uz', label: 'Nomi (UZ)', required: true },
-      { key: 'name_ru', label: 'Nomi (RU)' },
-      { key: 'slug', label: 'Slug' },
+      { key: 'slug', label: 'Slug', required: true },
+      // Skills have a single `name` column — no per-locale names.
+      { key: 'name', label: 'Nomi', required: true },
       { key: 'category_id', label: 'Kategoriya ID', type: 'number' },
+      { key: 'aliases', label: 'Sinonimlar (vergul bilan)', type: 'list' },
+      { key: 'is_curated', label: 'Tasdiqlangan roʻyxatda', type: 'bool' },
+      { key: 'is_active', label: 'Faol', type: 'bool' },
     ],
   },
   districts: {
@@ -41,11 +49,16 @@ const KINDS = {
     empty: 'Tumanlar topilmadi',
     searchable: true,
     fields: [
+      { key: 'region_id', label: 'Viloyat ID', type: 'number', required: true },
+      { key: 'soato', label: 'SOATO kodi', required: true },
       { key: 'name_uz', label: 'Nomi (UZ)', required: true },
-      { key: 'name_ru', label: 'Nomi (RU)' },
-      { key: 'name_en', label: 'Nomi (EN)' },
-      { key: 'region_id', label: 'Viloyat ID', type: 'number' },
-      { key: 'soato', label: 'SOATO' },
+      { key: 'name_ru', label: 'Nomi (RU)', required: true },
+      { key: 'name_en', label: 'Nomi (EN)', required: true },
+      { key: 'name_cyrl', label: 'Nomi (kirill)', required: true },
+      { key: 'ns11_code', label: 'NS11 kodi', type: 'number' },
+      { key: 'phone_kod', label: 'Telefon kodi' },
+      { key: 'region_sector', label: 'Sektor', type: 'number' },
+      { key: 'sort_order', label: 'Tartib raqami', type: 'number' },
     ],
   },
 };
@@ -85,7 +98,13 @@ function openCreate() {
 function openEdit(row) {
   editing.value = row;
   Object.keys(form).forEach((k) => delete form[k]);
-  cfg.value.fields.forEach((f) => { form[f.key] = row[f.key] ?? ''; });
+  cfg.value.fields.forEach((f) => {
+    const v = row[f.key];
+    if (v == null) { form[f.key] = ''; return; }
+    if (f.type === 'bool') form[f.key] = v ? 'true' : 'false';
+    else if (f.type === 'list') form[f.key] = Array.isArray(v) ? v.join(', ') : String(v);
+    else form[f.key] = v;
+  });
   modalOpen.value = true;
 }
 function closeModal() {
@@ -97,19 +116,31 @@ function buildBody() {
   const body = {};
   for (const f of cfg.value.fields) {
     let v = form[f.key];
-    if (v === '' || v == null) continue;
+    if (v === '' || v == null) continue; // omitted → server default / unchanged
     if (f.type === 'number') v = Number(v);
+    else if (f.type === 'bool') v = v === 'true' || v === true;
+    else if (f.type === 'list') {
+      v = String(v).split(',').map((s) => s.trim()).filter(Boolean);
+      if (!v.length) continue;
+    }
     body[f.key] = v;
   }
-  // convenience: mirror UZ name into the generic `name` if backend expects it
-  if (body.name_uz && body.name == null) body.name = body.name_uz;
   return body;
 }
 
 async function save() {
   if (saving.value) return;
-  const nameUz = (form.name_uz || '').trim();
-  if (!nameUz) { toastErr('Nomi (UZ) majburiy'); return; }
+  // Creation must carry every field the backend marks `required`; on edit the
+  // rules are `sometimes`, so a partial body is fine.
+  if (!editing.value) {
+    const missing = cfg.value.fields.filter(
+      (f) => f.required && String(form[f.key] ?? '').trim() === '',
+    );
+    if (missing.length) {
+      toastErr(`Majburiy maydonlar: ${missing.map((f) => f.label).join(', ')}`);
+      return;
+    }
+  }
   saving.value = true;
   try {
     const body = buildBody();
@@ -125,7 +156,7 @@ async function save() {
     }
     modalOpen.value = false;
   } catch (e) {
-    toastErr(e?.response?.data?.error?.message || 'Saqlashda xatolik');
+    toastErr(toApiError(e, 'Saqlashda xatolik').message);
   } finally {
     saving.value = false;
   }
@@ -143,7 +174,7 @@ async function remove() {
     toastOk('Oʻchirildi');
     confirming.value = null;
   } catch (e) {
-    toastErr(e?.response?.data?.error?.message || 'Oʻchirishda xatolik');
+    toastErr(toApiError(e, 'Oʻchirishda xatolik').message);
   } finally {
     deleting.value = false;
   }
@@ -232,6 +263,12 @@ async function remove() {
             <input v-model="form[f.key]" type="text" placeholder="#0B6E5F"
               class="flex-1 h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent font-mono" />
           </div>
+          <select v-else-if="f.type === 'bool'" v-model="form[f.key]"
+            class="mt-1.5 w-full h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent">
+            <option value="">Oʻzgarishsiz</option>
+            <option value="true">Ha</option>
+            <option value="false">Yoʻq</option>
+          </select>
           <input v-else v-model="form[f.key]" :type="f.type === 'number' ? 'number' : 'text'"
             class="mt-1.5 w-full h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent" />
         </label>

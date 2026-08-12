@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, onMounted, computed } from 'vue';
-import { CommerceApi, StatsApi } from '@/lib/api';
+import { CommerceApi, StatsApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
 import { label, fmtDate, fmtDateTime, fmtNum, som, somFull } from '@/lib/format';
 import DataState from '@/components/DataState.vue';
@@ -58,7 +58,7 @@ async function loadPlans() {
     const res = await CommerceApi.plans();
     plans.value = Array.isArray(res) ? res : res?.data ?? [];
   } catch (e) {
-    plansError.value = e?.response?.data?.error?.message || 'Tariflar yuklanmadi';
+    plansError.value = toApiError(e, 'Tariflar yuklanmadi').message;
   } finally {
     plansLoading.value = false;
   }
@@ -76,13 +76,21 @@ watch(tab, (t) => {
 
 onMounted(loadSummary);
 
-// helpers (defensive field access)
+// helpers — field names follow the admin resources
+// (SubscriptionAdminResource / PaymentAdminResource / PlanAdminResource).
 const userOf = (r) => r?.user?.email || r?.user?.phone || r?.user_email || r?.email || '—';
 const planOf = (r) => r?.plan?.name || r?.plan_name || r?.plan?.title || (typeof r?.plan === 'string' ? r.plan : '—');
-const amountOf = (r) => (r?.amount ?? r?.total ?? r?.price ?? null);
-const planPrice = (p) => (p?.price ?? p?.amount ?? p?.price_monthly ?? null);
-const planName = (p) => p?.name || p?.title || p?.slug || '—';
-const planInterval = (p) => label(p?.interval || p?.period || 'monthly');
+// Payments carry their own `amount`; subscriptions do not — the charge is the
+// plan price for the subscription's billing period.
+const payAmount = (r) => (r?.amount ?? null);
+const subAmount = (r) => {
+  const plan = r?.plan;
+  if (!plan) return null;
+  return (r?.billing_period === 'yearly' ? plan.price_yearly_uzs : plan.price_monthly_uzs) ?? null;
+};
+const planMonthly = (p) => (p?.price_monthly_uzs ?? null);
+const planYearly = (p) => (p?.price_yearly_uzs ?? null);
+const planName = (p) => p?.name || p?.name_uz || p?.code || '—';
 
 const summaryCards = computed(() => {
   const s = summary.value;
@@ -120,16 +128,19 @@ const summaryCards = computed(() => {
                 <th class="text-left font-semibold px-4 py-3">Tarif</th>
                 <th class="text-left font-semibold px-4 py-3">Holat</th>
                 <th class="text-right font-semibold px-4 py-3">Summa</th>
-                <th class="text-left font-semibold px-4 py-3 hidden md:table-cell">Keyingi toʻlov</th>
+                <th class="text-left font-semibold px-4 py-3 hidden md:table-cell">Tugash sanasi</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-line">
               <tr v-for="r in subs.items.value" :key="r.id" class="hover:bg-elev/40">
                 <td class="px-4 py-3 font-medium text-ink">{{ userOf(r) }}</td>
-                <td class="px-4 py-3 text-ink-2">{{ planOf(r) }}</td>
+                <td class="px-4 py-3 text-ink-2">
+                  {{ planOf(r) }}
+                  <span v-if="r.billing_period" class="text-xs text-ink-3">· {{ label(r.billing_period) }}</span>
+                </td>
                 <td class="px-4 py-3"><StatusBadge :value="r.status" /></td>
-                <td class="px-4 py-3 text-right text-ink tabular-nums">{{ amountOf(r) != null ? somFull(amountOf(r)) : '—' }}</td>
-                <td class="px-4 py-3 hidden md:table-cell text-ink-3">{{ fmtDate(r.current_period_end || r.renews_at || r.expires_at) }}</td>
+                <td class="px-4 py-3 text-right text-ink tabular-nums">{{ subAmount(r) != null ? somFull(subAmount(r)) : '—' }}</td>
+                <td class="px-4 py-3 hidden md:table-cell text-ink-3">{{ fmtDate(r.ends_at) }}</td>
               </tr>
             </tbody>
           </table>
@@ -161,10 +172,10 @@ const summaryCards = computed(() => {
             <tbody class="divide-y divide-line">
               <tr v-for="r in pays.items.value" :key="r.id" class="hover:bg-elev/40">
                 <td class="px-4 py-3 font-medium text-ink">{{ userOf(r) }}</td>
-                <td class="px-4 py-3 hidden sm:table-cell text-ink-2">{{ r.method || r.provider || r.gateway || '—' }}</td>
+                <td class="px-4 py-3 hidden sm:table-cell text-ink-2">{{ r.provider || '—' }}</td>
                 <td class="px-4 py-3"><StatusBadge :value="r.status" /></td>
-                <td class="px-4 py-3 text-right text-ink tabular-nums">{{ amountOf(r) != null ? somFull(amountOf(r)) : '—' }}</td>
-                <td class="px-4 py-3 text-ink-3 whitespace-nowrap">{{ fmtDateTime(r.created_at || r.paid_at) }}</td>
+                <td class="px-4 py-3 text-right text-ink tabular-nums">{{ payAmount(r) != null ? somFull(payAmount(r)) : '—' }}</td>
+                <td class="px-4 py-3 text-ink-3 whitespace-nowrap">{{ fmtDateTime(r.paid_at || r.created_at) }}</td>
               </tr>
             </tbody>
           </table>
@@ -184,13 +195,19 @@ const summaryCards = computed(() => {
         :empty="!plans.length" empty-text="Tariflar topilmadi" @retry="loadPlans">
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div v-for="p in plans" :key="p.id || planName(p)" class="rounded-2xl border border-line bg-surface p-5">
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-2">
               <h3 class="font-medium text-ink">{{ planName(p) }}</h3>
-              <StatusBadge v-if="p.is_active === false" value="unverified" text="Nofaol" tone="neutral" />
+              <StatusBadge v-if="p.is_public === false" value="unverified" text="Nofaol" tone="neutral" />
             </div>
             <div class="mt-2 font-serif-display text-2xl text-ink">
-              {{ planPrice(p) != null ? somFull(planPrice(p)) : '—' }}
-              <span class="text-sm text-ink-3 font-sans">/ {{ planInterval(p) }}</span>
+              {{ planMonthly(p) != null ? somFull(planMonthly(p)) : '—' }}
+              <span class="text-sm text-ink-3 font-sans">/ {{ label('monthly') }}</span>
+            </div>
+            <div v-if="planYearly(p)" class="mt-0.5 text-sm text-ink-3">
+              {{ somFull(planYearly(p)) }} / {{ label('yearly') }}
+            </div>
+            <div v-if="p.subscriptions_count != null" class="mt-1 text-xs text-ink-4">
+              {{ fmtNum(p.subscriptions_count) }} obuna
             </div>
             <ul v-if="Array.isArray(p.features) && p.features.length" class="mt-3 space-y-1.5 text-sm text-ink-2">
               <li v-for="(f, i) in p.features" :key="i" class="flex items-start gap-2">

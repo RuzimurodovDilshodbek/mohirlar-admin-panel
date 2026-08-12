@@ -40,6 +40,10 @@ export const useAuthStore = defineStore('auth', {
         return { ok: false, error: toApiError(e) };
       }
     },
+    /** Drop local session state without calling the API (used on a 401). */
+    clearSession() {
+      this._apply(null);
+    },
     async logout() {
       try {
         await AuthApi.logout();

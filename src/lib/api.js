@@ -36,21 +36,77 @@ export async function ensureCsrf() {
   csrfPrimed = true;
 }
 
-/** Normalised API error: { code, message, status, details }. */
-export function toApiError(err) {
+/**
+ * Normalised API error: { code, message, status, details, fields }.
+ *
+ * Two server shapes are handled: the app envelope `{ error: { code, message } }`
+ * and Laravel's validation envelope `{ message, errors: { field: [msg…] } }`
+ * (HTTP 422). For a 422 the per-field messages are folded into `message` so the
+ * admin sees *which* field failed instead of a generic toast; the raw map stays
+ * on `.fields` for callers that want to highlight inputs.
+ *
+ * `fallback` replaces the generic default when the server said nothing useful.
+ */
+export function toApiError(err, fallback) {
   const status = err?.response?.status ?? 0;
   const body = err?.response?.data;
   const e = body?.error;
+  const fields =
+    body?.errors && typeof body.errors === 'object' && !Array.isArray(body.errors)
+      ? body.errors
+      : null;
+
+  const fieldText = fields
+    ? Object.entries(fields)
+        .map(([f, msgs]) => `${f}: ${Array.isArray(msgs) ? msgs.join(' ') : msgs}`)
+        .join('; ')
+    : '';
+
+  const base =
+    e?.message ||
+    (fields ? 'Maʼlumotlar notoʻgʻri' : body?.message) ||
+    fallback ||
+    (status === 0 ? 'Tarmoq xatosi — ulanishni tekshiring' : 'Nimadir xato ketdi');
+
   return {
     status,
-    code: e?.code ?? (status === 0 ? 'network' : 'unknown'),
-    message:
-      e?.message ||
-      body?.message ||
-      (status === 0 ? 'Tarmoq xatosi — ulanishni tekshiring' : 'Nimadir xato ketdi'),
-    details: e?.details ?? body?.errors ?? null,
+    code: e?.code ?? (fields ? 'validation' : status === 0 ? 'network' : 'unknown'),
+    message: fieldText ? `${base} — ${fieldText}` : base,
+    details: e?.details ?? fields,
+    fields,
   };
 }
+
+// ─── Session expiry (401) ───
+// A Sanctum session can lapse mid-session. Without this the admin is left
+// staring at the backend's English "Authentication required." behind a retry
+// button that can never succeed. The handler is registered once at boot
+// (main.js) so this module stays free of store/router imports.
+let onUnauthorized = null;
+
+/** Register the app-level 401 handler (clears auth state + returns to login). */
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn;
+}
+
+// Requests where a 401 is the normal answer, not an expired session.
+const AUTH_EXEMPT = ['/api/v1/auth/admin/login', '/api/v1/auth/admin/logout', '/api/v1/me', '/sanctum/csrf-cookie'];
+
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    const url = err?.config?.url || '';
+    if (err?.response?.status === 401 && !AUTH_EXEMPT.some((p) => url.startsWith(p))) {
+      csrfPrimed = false;
+      try {
+        onUnauthorized?.();
+      } catch {
+        /* never mask the original error */
+      }
+    }
+    return Promise.reject(err);
+  },
+);
 
 // ─── Auth ───
 export const AuthApi = {

@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, computed } from 'vue';
-import { CompaniesApi } from '@/lib/api';
+import { CompaniesApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
 import { fmtDate, fmtNum } from '@/lib/format';
 import { toastOk, toastErr } from '@/lib/toast';
@@ -91,7 +91,7 @@ async function toggleVerify() {
     toastOk(target ? 'Kompaniya tasdiqlandi' : 'Tasdiq bekor qilindi');
     selected.value = null;
   } catch (e) {
-    toastErr(e?.response?.data?.error?.message || 'Xatolik');
+    toastErr(toApiError(e, 'Xatolik').message);
   } finally {
     acting.value = '';
   }
@@ -100,12 +100,14 @@ async function toggleVerify() {
 const detailRows = computed(() => {
   const c = selected.value;
   if (!c) return [];
+  // Keys match CompanyAdminResource (size_bucket is a range string like "11-50").
   return [
     ['Sanoat', industryOf(c)],
     ['Manzil', locationOf(c) || '—'],
     ['Veb-sayt', c.website || '—'],
-    ['Xodimlar', c.employees_count != null ? fmtNum(c.employees_count) : (c.size || '—')],
+    ['Xodimlar', c.size_bucket ? `${c.size_bucket} xodim` : '—'],
     ['Vakansiyalar', c.jobs_count != null ? fmtNum(c.jobs_count) : '—'],
+    ['Obunachilar', c.followers_count != null ? fmtNum(c.followers_count) : '—'],
     ['Roʻyxatdan oʻtgan', fmtDate(c.created_at)],
   ];
 });
@@ -174,7 +176,9 @@ const detailRows = computed(() => {
 
         <div v-if="loadingDetail" class="py-6 flex justify-center"><UiKit /></div>
         <template v-else>
-          <p v-if="selected.description" class="text-sm text-ink-2 whitespace-pre-line">{{ selected.description }}</p>
+          <!-- CompanyAdminResource does not expose `description`; `tagline` is the
+               only free-text field it returns. -->
+          <p v-if="selected.tagline" class="text-sm text-ink-2 whitespace-pre-line">{{ selected.tagline }}</p>
 
           <dl class="grid grid-cols-2 gap-3 text-sm border-t border-line pt-3">
             <div v-for="[k, v] in detailRows" :key="k">

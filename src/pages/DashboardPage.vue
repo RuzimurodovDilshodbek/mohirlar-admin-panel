@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { RouterLink } from 'vue-router';
-import { StatsApi, AuditApi } from '@/lib/api';
+import { StatsApi, AuditApi, toApiError } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { useModerationStore } from '@/stores/moderation';
 import { auditLabel, label, shortClass, timeAgo, fmtNum, som, CHART_COLORS } from '@/lib/format';
@@ -34,7 +34,7 @@ async function loadStats() {
   try {
     stats.value = await StatsApi.get();
   } catch (e) {
-    statsError.value = e?.response?.data?.error?.message || 'Statistika hozircha mavjud emas';
+    statsError.value = toApiError(e, 'Statistika hozircha mavjud emas').message;
     stats.value = null;
   }
 }

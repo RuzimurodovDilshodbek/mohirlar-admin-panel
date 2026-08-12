@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, computed } from 'vue';
-import { VerificationsApi } from '@/lib/api';
+import { VerificationsApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
 import { VERIFICATION_TYPES, label, fmtDateTime, timeAgo } from '@/lib/format';
 import { toastOk, toastErr } from '@/lib/toast';
@@ -39,6 +39,20 @@ const note = ref('');
 const isFinal = computed(() => ['approved', 'rejected'].includes(selected.value?.status));
 const payloadRows = computed(() => Object.entries(selected.value?.payload || {}));
 
+// ─── Whose documents are these ───
+// VerificationResource carries `user: { uuid, full_name, phone }` and an
+// optional `company: { uuid, name }`. Degrade gracefully when absent.
+const shortId = (v) => (v ? `#${String(v).slice(0, 8)}` : null);
+function subjectName(v) {
+  const u = v?.user;
+  return u?.full_name || u?.phone || shortId(u?.uuid || u?.id) || 'Nomaʼlum';
+}
+function subjectPhone(v) {
+  const u = v?.user;
+  return u?.full_name && u?.phone ? u.phone : '';
+}
+const companyName = (v) => v?.company?.name || '';
+
 async function open(v) {
   selected.value = v;
   mode.value = '';
@@ -69,7 +83,7 @@ async function confirm() {
     sync(updated);
     toastOk(mode.value === 'approve' ? 'Tasdiqlandi' : 'Rad etildi');
     selected.value = null;
-  } catch (e) { toastErr(e?.response?.data?.error?.message || 'Xatolik'); }
+  } catch (e) { toastErr(toApiError(e, 'Xatolik').message); }
   finally { acting.value = ''; }
 }
 </script>
@@ -89,6 +103,7 @@ async function confirm() {
         <table class="w-full text-sm">
           <thead class="bg-elev/60 text-ink-3 text-xs uppercase tracking-wide">
             <tr>
+              <th class="text-left font-semibold px-4 py-3">Kim</th>
               <th class="text-left font-semibold px-4 py-3">Tur</th>
               <th class="text-left font-semibold px-4 py-3">Holat</th>
               <th class="text-left font-semibold px-4 py-3 hidden sm:table-cell">Yuborilgan</th>
@@ -97,7 +112,13 @@ async function confirm() {
           </thead>
           <tbody class="divide-y divide-line">
             <tr v-for="v in list.items.value" :key="v.id" class="hover:bg-elev/40 cursor-pointer" @click="open(v)">
-              <td class="px-4 py-3 font-medium text-ink">{{ label(v.type) }}</td>
+              <td class="px-4 py-3">
+                <div class="font-medium text-ink">{{ subjectName(v) }}</div>
+                <div v-if="companyName(v) || subjectPhone(v)" class="text-xs text-ink-3">
+                  {{ companyName(v) || subjectPhone(v) }}
+                </div>
+              </td>
+              <td class="px-4 py-3 text-ink-2">{{ label(v.type) }}</td>
               <td class="px-4 py-3"><StatusBadge :value="v.status" /></td>
               <td class="px-4 py-3 hidden sm:table-cell text-ink-3">{{ timeAgo(v.submitted_at) }}</td>
               <td class="px-4 py-3 text-right">
@@ -116,12 +137,28 @@ async function confirm() {
       </div>
     </DataState>
 
-    <ModalDialog :open="!!selected" :title="selected ? label(selected.type) : ''" subtitle="Tasdiqlash soʻrovi" @close="close">
+    <ModalDialog :open="!!selected" :title="selected ? label(selected.type) : ''"
+      :subtitle="selected ? subjectName(selected) : 'Tasdiqlash soʻrovi'" @close="close">
       <div v-if="selected" class="space-y-4">
         <StatusBadge :value="selected.status" />
 
         <div v-if="loadingDetail" class="py-6 flex justify-center"><UiKit /></div>
         <template v-else>
+          <dl class="grid gap-3 sm:grid-cols-2 text-sm rounded-xl border border-line bg-elev/40 px-4 py-3">
+            <div class="min-w-0">
+              <dt class="text-ink-3 text-xs">Foydalanuvchi</dt>
+              <dd class="text-ink font-medium break-words">{{ subjectName(selected) }}</dd>
+            </div>
+            <div v-if="selected.user?.phone" class="min-w-0">
+              <dt class="text-ink-3 text-xs">Telefon</dt>
+              <dd class="text-ink font-medium break-words">{{ selected.user.phone }}</dd>
+            </div>
+            <div v-if="companyName(selected)" class="min-w-0">
+              <dt class="text-ink-3 text-xs">Kompaniya</dt>
+              <dd class="text-ink font-medium break-words">{{ companyName(selected) }}</dd>
+            </div>
+          </dl>
+
           <div v-if="selected.rejection_reason" class="rounded-xl border border-warn/25 bg-warn-soft px-4 py-3 text-sm text-warn">
             <span class="font-semibold">Rad etish sababi:</span> {{ selected.rejection_reason }}
           </div>

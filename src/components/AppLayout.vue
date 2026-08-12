@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { RouterView, useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { useModerationStore } from '@/stores/moderation';
@@ -15,21 +15,37 @@ const NAV = [
   { name: 'dashboard', label: 'Boshqaruv paneli', icon: 'M3 11l9-7 9 7M5 10v10h14V10' },
   { name: 'users', label: 'Foydalanuvchilar', icon: 'M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8M12 8a4 4 0 100-8 4 4 0 000 8' },
   { name: 'jobs', label: 'Vakansiyalar', icon: 'M3 7h18v13H3zM9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M3 12h18', badge: 'jobs' },
-  { name: 'companies', label: 'Kompaniyalar', icon: 'M3 21h18M6 21V7l6-4 6 4v14M10 9h.01M14 9h.01M10 13h.01M14 13h.01M10 17h.01M14 17h.01' },
+  { name: 'companies', label: 'Kompaniyalar', icon: 'M3 21h18M6 21V7l6-4 6 4v14M10 9h.01M14 9h.01M10 13h.01M14 13h.01M10 17h.01M14 17h.01', admin: true },
   { name: 'verifications', label: 'Tasdiqlashlar', icon: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4', badge: 'verifications' },
   { name: 'reports', label: 'Shikoyatlar', icon: 'M5 21V4M5 4h11l-2 4 2 4H5', badge: 'reports' },
-  { name: 'commerce', label: 'Moliya va obunalar', icon: 'M3 7h18v10H3zM3 11h18M7 15h3' },
-  { name: 'content', label: 'Maʼlumotnomalar', icon: 'M7 7h13M7 12h13M7 17h13M3.5 7h.01M3.5 12h.01M3.5 17h.01' },
+  { name: 'commerce', label: 'Moliya va obunalar', icon: 'M3 7h18v10H3zM3 11h18M7 15h3', admin: true },
+  { name: 'content', label: 'Maʼlumotnomalar', icon: 'M7 7h13M7 12h13M7 17h13M3.5 7h.01M3.5 12h.01M3.5 17h.01', admin: true },
   { name: 'audit', label: 'Audit jurnali', icon: 'M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9zM14 3v6h6M8 13h8M8 17h5' },
 ];
+
+// Companies / commerce / reference CMS live behind `role:admin` on the backend —
+// a moderator must not be offered a link that can only 403.
+const nav = computed(() => NAV.filter((item) => !item.admin || auth.isAdmin));
 
 function badgeCount(item) {
   if (!item.badge) return 0;
   return moderation.byNav[item.badge] || 0;
 }
 
+// ─── Connectivity pill ───
+// Reflects the browser's real online/offline state — no decorative status.
+const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
+const setOnline = () => { online.value = true; };
+const setOffline = () => { online.value = false; };
+
 onMounted(() => {
   moderation.refresh();
+  window.addEventListener('online', setOnline);
+  window.addEventListener('offline', setOffline);
+});
+onUnmounted(() => {
+  window.removeEventListener('online', setOnline);
+  window.removeEventListener('offline', setOffline);
 });
 
 async function logout() {
@@ -55,7 +71,7 @@ async function logout() {
 
       <nav class="flex-1 overflow-y-auto p-3 space-y-1">
         <RouterLink
-          v-for="item in NAV"
+          v-for="item in nav"
           :key="item.name"
           :to="{ name: item.name }"
           class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors"
@@ -109,8 +125,8 @@ async function logout() {
         </button>
         <h1 class="font-serif-display text-2xl text-ink">{{ route.meta.title || 'Mohirlar' }}</h1>
         <div class="flex-1" />
-        <span class="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-good-soft text-good border border-good/20 px-2.5 py-1 text-xs font-medium">
-          <span class="h-1.5 w-1.5 rounded-full bg-good" /> Onlayn
+        <span v-if="!online" class="inline-flex items-center gap-1.5 rounded-full bg-warn-soft text-warn border border-warn/20 px-2.5 py-1 text-xs font-medium">
+          <span class="h-1.5 w-1.5 rounded-full bg-warn" /> Oflayn
         </span>
       </header>
 

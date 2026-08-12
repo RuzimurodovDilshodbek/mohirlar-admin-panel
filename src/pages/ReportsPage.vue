@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, computed } from 'vue';
-import { ReportsApi } from '@/lib/api';
+import { ReportsApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
 import { REPORT_ACTIONS, label, fmtDateTime, timeAgo } from '@/lib/format';
 import { toastOk, toastErr } from '@/lib/toast';
@@ -33,6 +33,28 @@ const note = ref('');
 
 const isFinal = computed(() => ['resolved', 'dismissed'].includes(selected.value?.status));
 
+// ─── Who reported what ───
+// ReportResource carries `reporter: { uuid, full_name, role }` and
+// `target: { type, id, label, status }`; older payloads only had the flat
+// `reporter_id` / `target_type` / `target_id`, so degrade to those.
+const shortId = (v) => (v ? `#${String(v).slice(0, 8)}` : null);
+
+function targetKind(r) {
+  return label(r?.target?.type || r?.target_type);
+}
+function targetText(r) {
+  const t = r?.target;
+  const id = t?.id ?? r?.target_id;
+  if (t?.label) return `${targetKind(r)}: ${t.label}`;
+  return id != null ? `${targetKind(r)} ${shortId(id)}` : targetKind(r);
+}
+function reporterText(r) {
+  const rep = r?.reporter;
+  const name = rep?.full_name || shortId(rep?.uuid || rep?.id || r?.reporter_id);
+  if (!name) return 'Nomaʼlum';
+  return rep?.role ? `${name} · ${label(rep.role)}` : name;
+}
+
 async function open(r) {
   selected.value = r;
   mode.value = '';
@@ -62,7 +84,7 @@ async function confirm() {
     sync(updated);
     toastOk(mode.value === 'resolve' ? 'Hal qilindi' : 'Rad etildi');
     selected.value = null;
-  } catch (e) { toastErr(e?.response?.data?.error?.message || 'Xatolik'); }
+  } catch (e) { toastErr(toApiError(e, 'Xatolik').message); }
   finally { acting.value = ''; }
 }
 </script>
@@ -83,11 +105,13 @@ async function confirm() {
         >
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
-              <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span class="font-medium text-ink">{{ label(r.reason) }}</span>
-                <span class="text-xs text-ink-3">· {{ label(r.target_type) }} #{{ r.target_id }}</span>
+                <span class="text-xs text-ink-3 truncate">· {{ targetText(r) }}</span>
+                <StatusBadge v-if="r.target?.status" :value="r.target.status" :dot="false" />
               </div>
               <p v-if="r.description" class="mt-0.5 text-sm text-ink-3 line-clamp-1">{{ r.description }}</p>
+              <div class="mt-1 text-xs text-ink-4 truncate">Shikoyatchi: {{ reporterText(r) }}</div>
             </div>
             <div class="shrink-0 text-right">
               <StatusBadge :value="r.status" />
@@ -106,12 +130,26 @@ async function confirm() {
     </DataState>
 
     <ModalDialog :open="!!selected" :title="selected ? label(selected.reason) : ''"
-      :subtitle="selected ? (label(selected.target_type) + ' #' + selected.target_id) : ''" @close="close">
+      :subtitle="selected ? targetText(selected) : ''" @close="close">
       <div v-if="selected" class="space-y-4">
         <StatusBadge :value="selected.status" />
 
         <div v-if="loadingDetail" class="py-6 flex justify-center"><UiKit /></div>
         <template v-else>
+          <dl class="grid gap-3 sm:grid-cols-2 text-sm rounded-xl border border-line bg-elev/40 px-4 py-3">
+            <div class="min-w-0">
+              <dt class="text-ink-3 text-xs">Shikoyatchi</dt>
+              <dd class="text-ink font-medium break-words">{{ reporterText(selected) }}</dd>
+            </div>
+            <div class="min-w-0">
+              <dt class="text-ink-3 text-xs">Shikoyat obyekti</dt>
+              <dd class="text-ink font-medium break-words">
+                {{ targetText(selected) }}
+                <StatusBadge v-if="selected.target?.status" :value="selected.target.status" :dot="false" class="ml-1 align-middle" />
+              </dd>
+            </div>
+          </dl>
+
           <section v-if="selected.description">
             <h4 class="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-1">Shikoyat matni</h4>
             <p class="text-sm text-ink-2 whitespace-pre-line">{{ selected.description }}</p>

@@ -104,6 +104,9 @@ const LABELS = {
   cancelled: 'Bekor qilingan',
   incomplete: 'Tugallanmagan',
   grace: 'Imtiyoz muddati',
+  // billing periods
+  monthly: 'oylik',
+  yearly: 'yillik',
   // payment statuses
   paid: 'Toʻlangan',
   succeeded: 'Muvaffaqiyatli',

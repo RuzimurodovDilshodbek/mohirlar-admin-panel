@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch } from 'vue';
-import { JobsApi } from '@/lib/api';
+import { JobsApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
 import { JOB_STATUSES, label, salaryRange, fmtDate, timeAgo } from '@/lib/format';
 import { toastOk, toastErr } from '@/lib/toast';
@@ -67,7 +67,7 @@ async function approve() {
     applyAndSync(updated);
     toastOk('Vakansiya tasdiqlandi');
     selected.value = null;
-  } catch (e) { toastErr(e?.response?.data?.error?.message || 'Xatolik'); }
+  } catch (e) { toastErr(toApiError(e, 'Xatolik').message); }
   finally { acting.value = ''; }
 }
 
@@ -81,7 +81,7 @@ async function reject() {
     applyAndSync(updated);
     toastOk('Vakansiya rad etildi');
     selected.value = null;
-  } catch (e) { toastErr(e?.response?.data?.error?.message || 'Xatolik'); }
+  } catch (e) { toastErr(toApiError(e, 'Xatolik').message); }
   finally { acting.value = ''; }
 }
 
@@ -92,7 +92,7 @@ async function toggleFeature() {
     const updated = await JobsApi.feature(selected.value.id, !selected.value.featured);
     applyAndSync(updated);
     toastOk(updated.featured ? 'Tavsiyaga qoʻshildi' : 'Tavsiyadan olib tashlandi');
-  } catch (e) { toastErr(e?.response?.data?.error?.message || 'Xatolik'); }
+  } catch (e) { toastErr(toApiError(e, 'Xatolik').message); }
   finally { acting.value = ''; }
 }
 </script>
