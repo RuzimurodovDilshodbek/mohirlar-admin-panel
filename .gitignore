@@ -1,0 +1,21 @@
+# dependencies — reproduced exactly from package-lock.json with `npm ci`
+node_modules/
+
+# NOTE: dist/ is deliberately NOT ignored. The panel ships as its built bundle,
+# so the build output is committed alongside the source it was built from.
+# Rebuild with `npm run build` and commit dist/ in the same commit as src/.
+
+# local env
+.env
+.env.local
+.env.*.local
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
