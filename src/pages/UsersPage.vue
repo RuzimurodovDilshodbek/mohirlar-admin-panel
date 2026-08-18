@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, computed } from 'vue';
-import { UsersApi, toApiError } from '@/lib/api';
+import { UsersApi, CommerceApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
 import { useAuthStore } from '@/stores/auth';
 import { USER_ROLES, USER_STATUSES, label, fmtDate } from '@/lib/format';
@@ -38,6 +38,28 @@ watch(q, () => {
   searchTimer = setTimeout(reload, 350);
 });
 
+// ─── Plans ───
+// Mirrors App\Models\Plan::FREE_CODE_* — the plan a user falls back to when no
+// subscription is active. Picking it means "cancel the subscription", not
+// "write a free one", which is exactly what the endpoint does.
+const FREE_CODE = { candidate: 'cand_free', employer: 'emp_free' };
+const PLAN_AUDIENCES = ['candidate', 'employer'];
+
+const plans = ref([]);
+let plansRequested = false;
+
+async function loadPlans() {
+  if (plansRequested) return;
+  plansRequested = true;
+  try {
+    const res = await CommerceApi.plans();
+    plans.value = Array.isArray(res) ? res : res?.data ?? [];
+  } catch (e) {
+    plansRequested = false; // let the next open retry
+    toastErr(toApiError(e, 'Tariflar yuklanmadi').message);
+  }
+}
+
 // ─── Detail / edit modal ───
 const selected = ref(null);
 const saving = ref(false);
@@ -45,14 +67,30 @@ const editRole = ref('');
 const editStatus = ref('');
 const reason = ref('');
 
+const savingPlan = ref(false);
+const editPlanCode = ref('');
+const editPeriod = ref('monthly');
+const planNote = ref('');
+
+// A plan belongs to an audience, so it only makes sense for the two account
+// kinds that have one. Staff accounts are refused by the API too.
+const canManagePlan = computed(() => auth.isAdmin && PLAN_AUDIENCES.includes(selected.value?.role));
+const planOptions = computed(() => plans.value.filter((p) => p.audience === selected.value?.role));
+const freeSelected = computed(() => editPlanCode.value === FREE_CODE[selected.value?.role]);
+
 function open(user) {
   selected.value = user;
   editRole.value = user.role;
   editStatus.value = user.status;
   reason.value = '';
+
+  editPlanCode.value = user.plan?.code || FREE_CODE[user.role] || '';
+  editPeriod.value = user.plan?.billing_period || 'monthly';
+  planNote.value = '';
+  if (PLAN_AUDIENCES.includes(user.role) && auth.isAdmin) loadPlans();
 }
 function close() {
-  if (saving.value) return;
+  if (saving.value || savingPlan.value) return;
   selected.value = null;
 }
 
@@ -75,6 +113,31 @@ async function save() {
     saving.value = false;
   }
 }
+
+// Deliberately separate from save(): it hits a different endpoint and cancels
+// the user's current subscription, so folding it into the same button would
+// leave the admin guessing which half of a partial failure went through.
+async function savePlan() {
+  if (savingPlan.value || !selected.value || !editPlanCode.value) return;
+  savingPlan.value = true;
+  try {
+    const updated = await UsersApi.setPlan(selected.value.id, {
+      plan_code: editPlanCode.value,
+      billing_period: editPeriod.value,
+      note: planNote.value.trim() || undefined,
+    });
+    list.patch(updated);
+    selected.value = { ...selected.value, ...updated };
+    planNote.value = '';
+    toastOk(updated.plan ? `Tarif oʻzgartirildi: ${updated.plan.name}` : 'Foydalanuvchi bepul tarifga oʻtkazildi');
+  } catch (e) {
+    toastErr(toApiError(e, 'Tarifni oʻzgartirib boʻlmadi').message);
+  } finally {
+    savingPlan.value = false;
+  }
+}
+
+const planCell = (u) => (PLAN_AUDIENCES.includes(u.role) ? (u.plan?.name || 'Bepul') : '—');
 </script>
 
 <template>
@@ -109,6 +172,7 @@ async function save() {
               <th class="text-left font-semibold px-4 py-3">Foydalanuvchi</th>
               <th class="text-left font-semibold px-4 py-3 hidden sm:table-cell">Rol</th>
               <th class="text-left font-semibold px-4 py-3">Holat</th>
+              <th class="text-left font-semibold px-4 py-3 hidden lg:table-cell">Tarif</th>
               <th class="text-left font-semibold px-4 py-3 hidden md:table-cell">Roʻyxatdan oʻtgan</th>
               <th class="px-4 py-3"></th>
             </tr>
@@ -123,6 +187,12 @@ async function save() {
                 <StatusBadge :value="u.role" :dot="false" />
               </td>
               <td class="px-4 py-3"><StatusBadge :value="u.status" /></td>
+              <td class="px-4 py-3 hidden lg:table-cell">
+                <span :class="u.plan ? 'text-ink-2' : 'text-ink-4'">{{ planCell(u) }}</span>
+                <!-- Marks a plan an admin attached by hand rather than one that
+                     was bought — the same flag that keeps it out of MRR. -->
+                <span v-if="u.plan?.granted_by_admin" class="ml-1 text-xs text-ink-4">· qoʻlda</span>
+              </td>
               <td class="px-4 py-3 hidden md:table-cell text-ink-3">{{ fmtDate(u.created_at) }}</td>
               <td class="px-4 py-3 text-right">
                 <svg viewBox="0 0 24 24" class="inline h-4 w-4 text-ink-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
@@ -180,6 +250,52 @@ async function save() {
           <input v-model="reason" type="text" maxlength="500" placeholder="Audit jurnaliga yoziladi"
             class="mt-1.5 w-full h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent" />
         </label>
+
+        <!-- Tarif — o'z tugmasi bilan, chunki bu boshqa endpoint va eski
+             obunani bekor qiladi. -->
+        <div v-if="canManagePlan" class="rounded-xl border border-line bg-elev/30 p-4 space-y-3">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <span class="text-xs font-semibold uppercase tracking-wide text-ink-3">Tarif</span>
+            <span class="text-xs text-ink-4">
+              <template v-if="selected.plan">
+                Hozir: {{ selected.plan.name }} · {{ label(selected.plan.billing_period) }} · {{ fmtDate(selected.plan.ends_at) }} gacha
+              </template>
+              <template v-else>Hozir: Bepul (obuna yoʻq)</template>
+            </span>
+          </div>
+
+          <select v-model="editPlanCode" :disabled="!planOptions.length"
+            class="w-full h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent disabled:opacity-50">
+            <option v-if="!planOptions.length" value="">Tariflar yuklanmoqda…</option>
+            <option v-for="p in planOptions" :key="p.code" :value="p.code">{{ p.name || p.name_uz }}</option>
+          </select>
+
+          <!-- The free plan is the absence of a subscription, so a term would
+               mean nothing there. -->
+          <div v-if="!freeSelected" class="flex gap-2">
+            <button v-for="p in ['monthly', 'yearly']" :key="p" type="button"
+              class="flex-1 h-10 rounded-xl border text-sm font-medium capitalize"
+              :class="editPeriod === p ? 'border-accent bg-accent/10 text-ink' : 'border-line bg-surface text-ink-2 hover:bg-elev'"
+              @click="editPeriod = p">
+              {{ label(p) }}
+            </button>
+          </div>
+
+          <input v-model="planNote" type="text" maxlength="500" placeholder="Sabab — audit jurnaliga yoziladi"
+            class="w-full h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent" />
+
+          <button
+            class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-medium hover:bg-elev disabled:opacity-50"
+            :disabled="savingPlan || !editPlanCode" @click="savePlan">
+            <UiKit v-if="savingPlan" class="!h-4 !w-4" />
+            Tarifni oʻzgartirish
+          </button>
+
+          <p class="text-xs text-ink-4">
+            Qoʻlda berilgan tarif daromad hisobiga (MRR) qoʻshilmaydi va muddati tugaganda oʻzi yangilanmaydi.
+            Bepul tarif tanlansa, amaldagi obuna bekor qilinadi.
+          </p>
+        </div>
       </div>
 
       <template #footer>

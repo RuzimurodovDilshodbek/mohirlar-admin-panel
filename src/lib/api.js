@@ -136,6 +136,11 @@ export const UsersApi = {
   update(uuid, body) {
     return api.patch(`/api/v1/admin/users/${uuid}`, body).then((r) => r.data.data);
   },
+  // Attaches a plan to a candidate/employer by hand. Admin-only on the server
+  // (`role:admin`), so the caller must gate the UI the same way.
+  setPlan(uuid, body) {
+    return api.put(`/api/v1/admin/users/${uuid}/plan`, body).then((r) => r.data.data);
+  },
 };
 
 // ─── Jobs moderation ───

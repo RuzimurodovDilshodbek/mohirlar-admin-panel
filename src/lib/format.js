@@ -12,6 +12,7 @@ export const REPORT_ACTIONS = ['warning', 'content_removed', 'user_suspended', '
 export const REPORT_TARGETS = ['user', 'job', 'company', 'message', 'application'];
 export const AUDIT_ACTIONS = [
   'user.updated',
+  'user.plan_changed',
   'job.moderate.approved',
   'job.moderate.rejected',
   'job.moderate.featured',
@@ -155,6 +156,7 @@ export function tone(key) {
 export function auditLabel(action) {
   const map = {
     'user.updated': 'Foydalanuvchi yangilandi',
+    'user.plan_changed': 'Tarif oʻzgartirildi',
     'job.moderate.approved': 'Vakansiya tasdiqlandi',
     'job.moderate.rejected': 'Vakansiya rad etildi',
     'job.moderate.featured': 'Vakansiya tavsiya etildi',
