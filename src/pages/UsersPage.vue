@@ -172,8 +172,12 @@ const planCell = (u) => (PLAN_AUDIENCES.includes(u.role) ? (u.plan?.name || 'Bep
               <th class="text-left font-semibold px-4 py-3">Foydalanuvchi</th>
               <th class="text-left font-semibold px-4 py-3 hidden sm:table-cell">Rol</th>
               <th class="text-left font-semibold px-4 py-3">Holat</th>
-              <th class="text-left font-semibold px-4 py-3 hidden lg:table-cell">Tarif</th>
-              <th class="text-left font-semibold px-4 py-3 hidden md:table-cell">Roʻyxatdan oʻtgan</th>
+              <!-- Tarif outranks the signup date for space: on a page that now
+                   manages plans, the date is the one worth dropping first. A
+                   windowed browser sits around 950px, where lg: would have hidden
+                   the plan entirely. -->
+              <th class="text-left font-semibold px-4 py-3 hidden md:table-cell">Tarif</th>
+              <th class="text-left font-semibold px-4 py-3 hidden lg:table-cell">Roʻyxatdan oʻtgan</th>
               <th class="px-4 py-3"></th>
             </tr>
           </thead>
@@ -187,13 +191,13 @@ const planCell = (u) => (PLAN_AUDIENCES.includes(u.role) ? (u.plan?.name || 'Bep
                 <StatusBadge :value="u.role" :dot="false" />
               </td>
               <td class="px-4 py-3"><StatusBadge :value="u.status" /></td>
-              <td class="px-4 py-3 hidden lg:table-cell">
+              <td class="px-4 py-3 hidden md:table-cell">
                 <span :class="u.plan ? 'text-ink-2' : 'text-ink-4'">{{ planCell(u) }}</span>
                 <!-- Marks a plan an admin attached by hand rather than one that
                      was bought — the same flag that keeps it out of MRR. -->
                 <span v-if="u.plan?.granted_by_admin" class="ml-1 text-xs text-ink-4">· qoʻlda</span>
               </td>
-              <td class="px-4 py-3 hidden md:table-cell text-ink-3">{{ fmtDate(u.created_at) }}</td>
+              <td class="px-4 py-3 hidden lg:table-cell text-ink-3">{{ fmtDate(u.created_at) }}</td>
               <td class="px-4 py-3 text-right">
                 <svg viewBox="0 0 24 24" class="inline h-4 w-4 text-ink-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
               </td>

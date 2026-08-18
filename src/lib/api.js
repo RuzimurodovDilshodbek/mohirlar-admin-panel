@@ -9,7 +9,11 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || '',
   withCredentials: true,
   withXSRFToken: true,
-  headers: { Accept: 'application/json' },
+  // The API picks its locale from Accept-Language, so without this it answered
+  // in whatever the admin's browser asked for — plan names came back as "Free"
+  // next to a UI that says "Bepul" everywhere else. This panel is Uzbek-only,
+  // so say so once here rather than per call site.
+  headers: { Accept: 'application/json', 'Accept-Language': 'uz' },
 });
 
 // ─── Method-override shim ───
