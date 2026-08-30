@@ -1,29 +1,38 @@
 <script setup>
-import { ref, reactive, watch, computed } from 'vue';
+import { ref, reactive, watch, computed, onMounted, onUnmounted } from 'vue';
 import { ReferenceApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
+import { useQuerySync } from '@/lib/useQuerySync';
 import { refName, fmtNum } from '@/lib/format';
 import { toastOk, toastErr } from '@/lib/toast';
+import PageHeader from '@/components/PageHeader.vue';
 import DataState from '@/components/DataState.vue';
 import FilterTabs from '@/components/FilterTabs.vue';
+import SearchInput from '@/components/SearchInput.vue';
 import ModalDialog from '@/components/ModalDialog.vue';
-import UiKit from '@/components/UiKit.vue';
+import ConfirmDialog from '@/components/ConfirmDialog.vue';
+import LoadMore from '@/components/LoadMore.vue';
+import Spinner from '@/components/Spinner.vue';
+import Icon from '@/components/Icon.vue';
 
 // Config-driven reference CMS. Each kind maps to a public read endpoint and the
 // admin write endpoints POST/PATCH/DELETE /admin/reference/{kind}.
 // The field lists mirror AdminReferenceController's validation rules 1:1 —
 // every `required` rule has an input here, or creation fails server-side.
+//
+// `ref` fields render a real picker instead of asking an admin to remember that
+// Samarqand is region 18.
 const KINDS = {
   categories: {
     label: 'Kategoriyalar',
     empty: 'Kategoriyalar topilmadi',
-    searchable: true,
+    hint: 'Vakansiya kategoriyalari — mobil ilovadagi filtrlar shu roʻyxatdan quriladi.',
     fields: [
-      { key: 'slug', label: 'Slug', required: true },
+      { key: 'slug', label: 'Slug', required: true, mono: true, hint: 'lotin harflari, chiziqcha bilan' },
       { key: 'name_uz', label: 'Nomi (UZ)', required: true },
       { key: 'name_ru', label: 'Nomi (RU)', required: true },
       { key: 'name_en', label: 'Nomi (EN)', required: true },
-      { key: 'parent_id', label: 'Ota kategoriya ID', type: 'number' },
+      { key: 'parent_id', label: 'Ota kategoriya', type: 'ref', source: 'categories' },
       { key: 'icon', label: 'Ikonka nomi' },
       { key: 'color', label: 'Rang', type: 'color' },
       { key: 'sort_order', label: 'Tartib raqami', type: 'number' },
@@ -33,13 +42,13 @@ const KINDS = {
   skills: {
     label: 'Koʻnikmalar',
     empty: 'Koʻnikmalar topilmadi',
-    searchable: true,
+    hint: 'Nomzod va vakansiya koʻnikmalari. «Tasdiqlangan roʻyxat» — taklif sifatida chiqadiganlari.',
     fields: [
-      { key: 'slug', label: 'Slug', required: true },
+      { key: 'slug', label: 'Slug', required: true, mono: true },
       // Skills have a single `name` column — no per-locale names.
       { key: 'name', label: 'Nomi', required: true },
-      { key: 'category_id', label: 'Kategoriya ID', type: 'number' },
-      { key: 'aliases', label: 'Sinonimlar (vergul bilan)', type: 'list' },
+      { key: 'category_id', label: 'Kategoriya', type: 'ref', source: 'categories' },
+      { key: 'aliases', label: 'Sinonimlar', type: 'list', hint: 'vergul bilan ajrating' },
       { key: 'is_curated', label: 'Tasdiqlangan roʻyxatda', type: 'bool' },
       { key: 'is_active', label: 'Faol', type: 'bool' },
     ],
@@ -47,10 +56,10 @@ const KINDS = {
   districts: {
     label: 'Tumanlar',
     empty: 'Tumanlar topilmadi',
-    searchable: true,
+    hint: 'Manzil maʼlumotnomasi. SOATO kodi davlat klassifikatoridan olinadi.',
     fields: [
-      { key: 'region_id', label: 'Viloyat ID', type: 'number', required: true },
-      { key: 'soato', label: 'SOATO kodi', required: true },
+      { key: 'region_id', label: 'Viloyat', type: 'ref', source: 'regions', required: true },
+      { key: 'soato', label: 'SOATO kodi', required: true, mono: true },
       { key: 'name_uz', label: 'Nomi (UZ)', required: true },
       { key: 'name_ru', label: 'Nomi (RU)', required: true },
       { key: 'name_en', label: 'Nomi (EN)', required: true },
@@ -77,34 +86,62 @@ function reload() {
   if (q.value.trim()) params.q = q.value.trim();
   list.load(params);
 }
+useQuerySync({ kind, q }, { kind: 'categories', q: '' }, reload);
 watch(kind, () => { q.value = ''; reload(); }, { immediate: true });
 watch(q, () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(reload, 350);
 });
 
+const searchEl = ref(null);
+const focusSearch = () => searchEl.value?.focus();
+onMounted(() => window.addEventListener('admin:focus-search', focusSearch));
+onUnmounted(() => {
+  window.removeEventListener('admin:focus-search', focusSearch);
+  clearTimeout(searchTimer);
+});
+
+// ─── Reference option sources (loaded once, on demand) ───
+const sources = reactive({ categories: null, regions: null });
+async function loadSource(name) {
+  if (sources[name]) return;
+  try {
+    const res = await ReferenceApi[name]({ per_page: 200 });
+    sources[name] = (res?.data ?? []).map((r) => ({ id: r.id, name: refName(r) }));
+  } catch {
+    sources[name] = []; // fall back to a plain number input
+  }
+}
+const sourceName = (name, id) => sources[name]?.find((o) => o.id === Number(id))?.name || null;
+
 // ─── Create / edit modal ───
 const modalOpen = ref(false);
 const editing = ref(null);
 const saving = ref(false);
 const form = reactive({});
+const missing = ref([]);
+
+function resetForm(row) {
+  Object.keys(form).forEach((k) => delete form[k]);
+  for (const f of cfg.value.fields) {
+    if (f.type === 'ref') loadSource(f.source);
+    const v = row?.[f.key];
+    if (v == null) { form[f.key] = f.type === 'bool' && !row ? 'true' : ''; continue; }
+    if (f.type === 'bool') form[f.key] = v ? 'true' : 'false';
+    else if (f.type === 'list') form[f.key] = Array.isArray(v) ? v.join(', ') : String(v);
+    else form[f.key] = v;
+  }
+  missing.value = [];
+}
 
 function openCreate() {
   editing.value = null;
-  Object.keys(form).forEach((k) => delete form[k]);
-  cfg.value.fields.forEach((f) => { form[f.key] = ''; });
+  resetForm(null);
   modalOpen.value = true;
 }
 function openEdit(row) {
   editing.value = row;
-  Object.keys(form).forEach((k) => delete form[k]);
-  cfg.value.fields.forEach((f) => {
-    const v = row[f.key];
-    if (v == null) { form[f.key] = ''; return; }
-    if (f.type === 'bool') form[f.key] = v ? 'true' : 'false';
-    else if (f.type === 'list') form[f.key] = Array.isArray(v) ? v.join(', ') : String(v);
-    else form[f.key] = v;
-  });
+  resetForm(row);
   modalOpen.value = true;
 }
 function closeModal() {
@@ -117,7 +154,7 @@ function buildBody() {
   for (const f of cfg.value.fields) {
     let v = form[f.key];
     if (v === '' || v == null) continue; // omitted → server default / unchanged
-    if (f.type === 'number') v = Number(v);
+    if (f.type === 'number' || f.type === 'ref') v = Number(v);
     else if (f.type === 'bool') v = v === 'true' || v === true;
     else if (f.type === 'list') {
       v = String(v).split(',').map((s) => s.trim()).filter(Boolean);
@@ -133,11 +170,11 @@ async function save() {
   // Creation must carry every field the backend marks `required`; on edit the
   // rules are `sometimes`, so a partial body is fine.
   if (!editing.value) {
-    const missing = cfg.value.fields.filter(
-      (f) => f.required && String(form[f.key] ?? '').trim() === '',
-    );
-    if (missing.length) {
-      toastErr(`Majburiy maydonlar: ${missing.map((f) => f.label).join(', ')}`);
+    missing.value = cfg.value.fields
+      .filter((f) => f.required && String(form[f.key] ?? '').trim() === '')
+      .map((f) => f.key);
+    if (missing.value.length) {
+      toastErr('Majburiy maydonlarni toʻldiring');
       return;
     }
   }
@@ -179,123 +216,166 @@ async function remove() {
     deleting.value = false;
   }
 }
+
+// Secondary line under a row's name: whichever identifier the kind actually has.
+function rowMeta(row) {
+  if (kind.value === 'districts') return sourceName('regions', row.region_id) || (row.soato ? `SOATO ${row.soato}` : '');
+  if (kind.value === 'skills') return sourceName('categories', row.category_id) || '';
+  return row.name_ru || '';
+}
+onMounted(() => {
+  // The list needs the region/category names too, not just the form.
+  loadSource('regions');
+  loadSource('categories');
+});
 </script>
 
 <template>
   <div class="space-y-5">
+    <PageHeader :description="cfg.hint">
+      <template #actions>
+        <button class="btn btn-primary btn-sm" @click="openCreate">
+          <Icon name="plus" :size="15" /> Qoʻshish
+        </button>
+      </template>
+    </PageHeader>
+
     <div class="flex flex-wrap items-center justify-between gap-3">
       <FilterTabs v-model="kind" :options="kindTabs" />
-      <button class="inline-flex items-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-sm font-medium text-white hover:bg-ink/90"
-        @click="openCreate">
-        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-        Qoʻshish
-      </button>
+      <SearchInput ref="searchEl" v-model="q" placeholder="Nom boʻyicha qidirish" class="max-w-xs" />
     </div>
 
-    <div v-if="cfg.searchable" class="relative max-w-sm">
-      <svg viewBox="0 0 24 24" class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4"
-        fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-        <circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" />
-      </svg>
-      <input v-model="q" type="search" placeholder="Nom boʻyicha qidirish"
-        class="w-full h-10 rounded-xl border border-line bg-surface pl-9 pr-3 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/15" />
-    </div>
-
-    <DataState :loading="list.loading.value" :error="list.error.value"
-      :empty="!list.items.value.length" :empty-text="cfg.empty" @retry="reload">
-      <div class="overflow-x-auto rounded-2xl border border-line bg-surface">
-        <table class="w-full text-sm">
-          <thead class="bg-elev/60 text-ink-3 text-xs uppercase tracking-wide">
-            <tr>
-              <th class="text-left font-semibold px-4 py-3">Nomi</th>
-              <th class="text-left font-semibold px-4 py-3 hidden sm:table-cell">Slug / kod</th>
-              <th v-if="kind === 'skills'" class="text-right font-semibold px-4 py-3 hidden md:table-cell">Ishlatilgan</th>
-              <th class="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-line">
-            <tr v-for="row in list.items.value" :key="row.id" class="hover:bg-elev/40">
-              <td class="px-4 py-3">
-                <div class="flex items-center gap-2.5">
-                  <span v-if="row.color" class="h-3.5 w-3.5 rounded-full shrink-0 border border-line" :style="{ background: row.color }" />
-                  <div>
-                    <div class="font-medium text-ink">{{ refName(row) }}</div>
-                    <div v-if="row.name_ru" class="text-xs text-ink-3">{{ row.name_ru }}</div>
+    <DataState
+      :loading="list.loading.value" :error="list.error.value"
+      :empty="!list.items.value.length" :empty-text="cfg.empty"
+      empty-icon="list" @retry="reload"
+    >
+      <div class="card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="tbl min-w-[560px]">
+            <thead>
+              <tr>
+                <th>Nomi</th>
+                <th class="hidden sm:table-cell">Slug / kod</th>
+                <th v-if="kind === 'skills'" class="hidden text-right md:table-cell">Ishlatilgan</th>
+                <th class="hidden text-center lg:table-cell">Holat</th>
+                <th class="w-24"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in list.items.value" :key="row.id" class="group">
+                <td>
+                  <div class="flex items-center gap-2.5">
+                    <span
+                      v-if="row.color"
+                      class="h-3.5 w-3.5 shrink-0 rounded-full border border-line"
+                      :style="{ background: row.color }"
+                    />
+                    <div class="min-w-0">
+                      <div class="truncate font-medium text-ink">{{ refName(row) }}</div>
+                      <div v-if="rowMeta(row)" class="truncate text-xs text-ink-3">{{ rowMeta(row) }}</div>
+                    </div>
                   </div>
-                </div>
-              </td>
-              <td class="px-4 py-3 hidden sm:table-cell text-ink-3 font-mono text-xs">
-                {{ row.slug || row.soato || (row.category_id != null ? 'cat #' + row.category_id : '') || '—' }}
-              </td>
-              <td v-if="kind === 'skills'" class="px-4 py-3 hidden md:table-cell text-right text-ink-2 tabular-nums">
-                {{ fmtNum(row.usage_count ?? 0) }}
-              </td>
-              <td class="px-4 py-3">
-                <div class="flex items-center justify-end gap-1">
-                  <button class="p-1.5 rounded-lg text-ink-3 hover:bg-elev hover:text-ink" title="Tahrirlash" @click="openEdit(row)">
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z" /></svg>
-                  </button>
-                  <button class="p-1.5 rounded-lg text-ink-3 hover:bg-warn-soft hover:text-warn" title="Oʻchirish" @click="confirming = row">
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>
-                  </button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                </td>
+                <td class="hidden font-mono text-xs text-ink-3 sm:table-cell">
+                  {{ row.slug || row.soato || '—' }}
+                </td>
+                <td v-if="kind === 'skills'" class="hidden text-right text-ink-2 tabular-nums md:table-cell">
+                  {{ fmtNum(row.usage_count ?? 0) }}
+                </td>
+                <td class="hidden lg:table-cell">
+                  <div class="flex flex-wrap justify-center gap-1">
+                    <span v-if="row.is_active === false" class="chip border-danger/25 bg-danger-soft py-0.5 text-[11px] text-danger-ink">Nofaol</span>
+                    <span v-else-if="row.is_active === true" class="chip border-good/25 bg-good-soft py-0.5 text-[11px] text-good-ink">Faol</span>
+                    <span v-if="row.is_curated" class="chip border-ai/25 bg-ai-soft py-0.5 text-[11px] text-ai-ink">Tavsiyada</span>
+                    <span v-if="row.is_active == null && !row.is_curated" class="text-ink-4">—</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="flex items-center justify-end gap-1 opacity-60 transition-opacity group-hover:opacity-100">
+                    <button class="icon-btn" title="Tahrirlash" @click="openEdit(row)">
+                      <Icon name="edit" :size="16" />
+                    </button>
+                    <button class="icon-btn hover:bg-danger-soft hover:text-danger-ink" title="Oʻchirish" @click="confirming = row">
+                      <Icon name="trash" :size="16" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div v-if="list.nextCursor.value" class="mt-4 flex justify-center">
-        <button class="inline-flex items-center gap-2 rounded-xl border border-line bg-surface px-5 py-2.5 text-sm font-medium hover:bg-elev disabled:opacity-50"
-          :disabled="list.loadingMore.value" @click="list.loadMore()">
-          <UiKit v-if="list.loadingMore.value" class="!h-4 !w-4" /> Koʻproq yuklash
-        </button>
-      </div>
+      <LoadMore
+        :has-more="!!list.nextCursor.value" :loading="list.loadingMore.value"
+        :count="list.items.value.length" @more="list.loadMore()"
+      />
     </DataState>
 
-    <!-- Create / edit -->
-    <ModalDialog :open="modalOpen" :title="editing ? 'Tahrirlash' : 'Yangi yozuv'" :subtitle="cfg.label" @close="closeModal">
-      <div class="space-y-3">
+    <!-- ─── Create / edit ─── -->
+    <ModalDialog
+      :open="modalOpen" :title="editing ? 'Tahrirlash' : 'Yangi yozuv'" :subtitle="cfg.label"
+      :dismissible="!saving" @close="closeModal"
+    >
+      <div class="space-y-3.5">
         <label v-for="f in cfg.fields" :key="f.key" class="block">
-          <span class="text-xs font-semibold uppercase tracking-wide text-ink-3">{{ f.label }}<span v-if="f.required" class="text-warn"> *</span></span>
+          <span class="field-label">
+            {{ f.label }}<span v-if="f.required" class="text-danger-ink"> *</span>
+          </span>
+
+          <!-- colour -->
           <div v-if="f.type === 'color'" class="mt-1.5 flex items-center gap-2">
-            <input v-model="form[f.key]" type="color" class="h-11 w-14 rounded-xl border border-line bg-surface p-1 cursor-pointer" />
-            <input v-model="form[f.key]" type="text" placeholder="#0B6E5F"
-              class="flex-1 h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent font-mono" />
+            <input v-model="form[f.key]" type="color" class="h-11 w-14 cursor-pointer rounded-xl border border-line bg-surface p-1" />
+            <input v-model="form[f.key]" type="text" placeholder="#3D6BFF" class="input flex-1 font-mono" />
           </div>
-          <select v-else-if="f.type === 'bool'" v-model="form[f.key]"
-            class="mt-1.5 w-full h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent">
-            <option value="">Oʻzgarishsiz</option>
-            <option value="true">Ha</option>
-            <option value="false">Yoʻq</option>
+
+          <!-- boolean: a switch, not a three-state select -->
+          <div v-else-if="f.type === 'bool'" class="mt-1.5 flex gap-1 rounded-xl bg-elev p-1">
+            <button
+              v-for="o in [{ v: 'true', t: 'Ha' }, { v: 'false', t: 'Yoʻq' }, { v: '', t: 'Oʻzgarishsiz' }]"
+              :key="o.v" type="button"
+              class="flex-1 rounded-lg py-2 text-sm font-medium transition-colors"
+              :class="String(form[f.key]) === o.v ? 'bg-surface text-ink shadow-sm' : 'text-ink-3 hover:text-ink'"
+              @click="form[f.key] = o.v"
+            >{{ o.t }}</button>
+          </div>
+
+          <!-- reference picker -->
+          <select v-else-if="f.type === 'ref'" v-model="form[f.key]" class="select mt-1.5" :class="missing.includes(f.key) ? 'border-danger' : ''">
+            <option value="">— tanlanmagan —</option>
+            <option v-for="o in sources[f.source] || []" :key="o.id" :value="o.id">{{ o.name }}</option>
           </select>
-          <input v-else v-model="form[f.key]" :type="f.type === 'number' ? 'number' : 'text'"
-            class="mt-1.5 w-full h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent" />
+
+          <input
+            v-else v-model="form[f.key]" :type="f.type === 'number' ? 'number' : 'text'"
+            class="input mt-1.5"
+            :class="[missing.includes(f.key) ? 'border-danger' : '', f.mono ? 'font-mono' : '']"
+          />
+
+          <span v-if="f.hint" class="mt-1 block text-xs text-ink-4">{{ f.hint }}</span>
         </label>
       </div>
+
       <template #footer>
         <div class="flex justify-end gap-2">
-          <button class="rounded-xl border border-line px-4 py-2.5 text-sm font-medium hover:bg-elev" :disabled="saving" @click="closeModal">Bekor qilish</button>
-          <button class="inline-flex items-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-sm font-medium text-white hover:bg-ink/90 disabled:opacity-50" :disabled="saving" @click="save">
-            <UiKit v-if="saving" class="!h-4 !w-4 !border-white/40 !border-t-white" />
+          <button class="btn btn-neutral" :disabled="saving" @click="closeModal">Bekor qilish</button>
+          <button class="btn btn-primary" :disabled="saving" @click="save">
+            <Spinner v-if="saving" :size="16" on-fill />
             Saqlash
           </button>
         </div>
       </template>
     </ModalDialog>
 
-    <!-- Delete confirm -->
-    <ModalDialog :open="!!confirming" title="Oʻchirishni tasdiqlang" :subtitle="confirming ? refName(confirming) : ''" @close="confirming = null">
-      <p class="text-sm text-ink-2">Ushbu yozuvni oʻchirmoqchimisiz? Bu amalni ortga qaytarib boʻlmaydi.</p>
-      <template #footer>
-        <div class="flex justify-end gap-2">
-          <button class="rounded-xl border border-line px-4 py-2.5 text-sm font-medium hover:bg-elev" :disabled="deleting" @click="confirming = null">Bekor qilish</button>
-          <button class="inline-flex items-center gap-2 rounded-xl bg-warn px-4 py-2.5 text-sm font-medium text-white hover:bg-warn/90 disabled:opacity-50" :disabled="deleting" @click="remove">
-            <UiKit v-if="deleting" class="!h-4 !w-4 !border-white/40 !border-t-white" />
-            Oʻchirish
-          </button>
-        </div>
-      </template>
-    </ModalDialog>
+    <ConfirmDialog
+      :open="!!confirming"
+      title="Oʻchirishni tasdiqlang"
+      :message="confirming ? `«${refName(confirming)}» oʻchiriladi. Bu amalni ortga qaytarib boʻlmaydi va unga bogʻlangan yozuvlarga taʼsir qilishi mumkin.` : ''"
+      confirm-label="Oʻchirish"
+      :busy="deleting"
+      @confirm="remove"
+      @cancel="confirming = null"
+    />
   </div>
 </template>

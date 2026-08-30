@@ -1,40 +1,132 @@
 @import 'tailwindcss';
 
-/* ─── Mohirlar brand theme (warm sand + deep teal), mirrors the mobile app ─── */
+/* Dark mode is an explicit choice stored by `lib/theme.js`, which stamps
+   `data-theme` on <html>. "system" resolves to light/dark before stamping, so
+   there is always exactly one source of truth. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Mohirlar design tokens — the SAME palette the mobile app ships (see
+   mohirlar-mobile/src/theme/tokens.ts). Roles, not colours: a brand change
+   touches this block and nothing else. Contrast was measured on the mobile
+   side, so the values are ported unchanged and both products agree.
+   ──────────────────────────────────────────────────────────────────────────── */
 @theme {
-  --color-bg: #faf9f6;
+  /* surfaces */
+  --color-bg: #f5f7fa;
+  --color-bg-2: #eaeef5;
   --color-surface: #ffffff;
-  --color-elev: #f4f2ec;
-  --color-line: rgba(20, 18, 14, 0.08);
-  --color-line-strong: rgba(20, 18, 14, 0.14);
+  --color-surface-2: #f7f9fc;
+  --color-elev: #f1f4f9;
+  --color-line: #d7dfea;
+  --color-line-2: #e9eef5;
+  --color-press: rgba(15, 23, 42, 0.06);
 
-  --color-ink: #14110d;
-  --color-ink-2: #43403a;
-  --color-ink-3: #7a766e;
-  --color-ink-4: #b5b0a4;
+  /* ink ramp */
+  --color-ink: #0f172a;
+  --color-ink-2: #475569;
+  --color-ink-3: #5d6b80;
+  --color-ink-4: #94a3b8;
 
-  --color-accent: #0b6e5f;
-  --color-accent-soft: #e6f1ee;
-  --color-accent-ink: #053d34;
+  /* brand */
+  --color-accent: #3d6bff;
+  --color-accent-fill: #2f5ce8;
+  --color-accent-soft: #edf2ff;
+  --color-accent-ink: #2450d8;
 
-  --color-warn: #c2410c;
-  --color-warn-soft: #fbe9dd;
-  --color-good: #1f8a55;
+  /* status — `*-soft` is a tint background, `*-ink` a label ON that tint,
+     the bare role a fill under white text. */
+  --color-good: #1f9e54;
   --color-good-soft: #e2f2e9;
-  --color-info: #1e5eff;
-  --color-info-soft: #e5ecff;
-  --color-ai: #7a4dff;
-  --color-ai-soft: #efeaff;
+  --color-good-ink: #0f7a43;
+  --color-warn: #d9920b;
+  --color-warn-soft: #fbefd7;
+  --color-warn-ink: #96590a;
+  --color-danger: #e1483b;
+  --color-danger-soft: #fbe3e1;
+  --color-danger-ink: #c42b2b;
+  --color-info: #0ea5e9;
+  --color-info-soft: #e5f3fd;
+  --color-info-ink: #0369a1;
+  --color-ai: #7c3aed;
+  --color-ai-soft: #f1ebff;
+  --color-ai-ink: #6d28d9;
 
   --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'Geist Mono', ui-monospace, monospace;
   --font-serif: 'Newsreader', Georgia, serif;
 }
 
+/* Unlayered, so it beats the `theme` layer regardless of source order. */
+[data-theme='dark'] {
+  --color-bg: #04070f;
+  --color-bg-2: #070c18;
+  --color-surface: #0c1322;
+  --color-surface-2: #0f1728;
+  --color-elev: #101a2c;
+  --color-line: rgba(255, 255, 255, 0.1);
+  --color-line-2: rgba(255, 255, 255, 0.06);
+  --color-press: rgba(255, 255, 255, 0.05);
+
+  --color-ink: #ffffff;
+  --color-ink-2: #94a3b8;
+  --color-ink-3: #7c8ba2;
+  /* ink-4 carries real data in dark mode — plan names, dates, record counts —
+     not just decoration. At #475569 it measured 2.5:1 on the surface, well
+     under AA; this is 4.59:1, the dimmest value that still clears AA while
+     staying below ink-3 so the four-step ramp keeps its hierarchy. */
+  --color-ink-4: #6f7f96;
+
+  --color-accent: #3d6bff;
+  --color-accent-fill: #3563f0;
+  --color-accent-soft: rgba(61, 107, 255, 0.16);
+  --color-accent-ink: #6b8bff;
+
+  --color-good: #22c55e;
+  --color-good-soft: rgba(34, 197, 94, 0.15);
+  --color-good-ink: #34d399;
+  --color-warn: #f59e0b;
+  --color-warn-soft: rgba(245, 158, 11, 0.15);
+  --color-warn-ink: #fbbf24;
+  --color-danger: #ef4444;
+  --color-danger-soft: rgba(239, 68, 68, 0.15);
+  --color-danger-ink: #f87171;
+  --color-info: #0ea5e9;
+  --color-info-soft: rgba(14, 165, 233, 0.15);
+  --color-info-ink: #38bdf8;
+  --color-ai: #8b5cf6;
+  --color-ai-soft: rgba(139, 92, 246, 0.16);
+  --color-ai-ink: #c4b5fd;
+}
+
+/* ─── Elevation ───
+   Real shadows in daylight; in the dark a shadow is invisible, so the same
+   role becomes a hairline ring plus a deeper drop. */
+:root {
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.04);
+  --shadow-raised: 0 2px 4px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.07);
+  --shadow-pop: 0 8px 16px rgba(15, 23, 42, 0.08), 0 24px 48px rgba(15, 23, 42, 0.14);
+  --scrim: rgba(15, 23, 42, 0.38);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+[data-theme='dark'] {
+  --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.03), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-raised: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 24px 56px rgba(0, 0, 0, 0.7);
+  --scrim: rgba(2, 4, 10, 0.66);
+}
+
 html,
 body,
 #app {
   height: 100%;
+}
+
+html {
+  color-scheme: light;
+}
+[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 body {
@@ -46,17 +138,230 @@ body {
   letter-spacing: -0.005em;
 }
 
-/* thin custom scrollbars */
-*::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-*::-webkit-scrollbar-thumb {
-  background: rgba(20, 18, 14, 0.14);
-  border-radius: 8px;
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
 }
 
-.font-serif-display {
-  font-family: var(--font-serif);
-  letter-spacing: -0.01em;
+/* thin custom scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-4);
+  background-clip: content-box;
+}
+
+/* One focus ring for the whole app — keyboard only, never on mouse clicks. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* …except the controls that already draw their own ring, which would otherwise
+   show two of them stacked. */
+.input:focus-visible,
+.select:focus-visible,
+.textarea:focus-visible,
+.no-ring:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer components {
+  /* ─── Surfaces ─── */
+  .card {
+    @apply rounded-2xl border border-line bg-surface;
+    box-shadow: var(--shadow-card);
+  }
+  .card-hover {
+    @apply transition-all duration-200;
+  }
+  .card-hover:hover {
+    border-color: color-mix(in oklab, var(--color-accent) 45%, transparent);
+    box-shadow: var(--shadow-raised);
+  }
+  .panel {
+    @apply rounded-xl border border-line bg-elev/60;
+  }
+
+  /* ─── Buttons ─── */
+  .btn {
+    @apply inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl px-4
+           text-sm font-medium whitespace-nowrap transition-colors duration-150
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-sm {
+    @apply h-9 rounded-lg px-3 text-[13px];
+  }
+  .btn-lg {
+    @apply h-12 rounded-xl px-5 text-[15px];
+  }
+  .btn-primary {
+    background: var(--color-accent-fill);
+    @apply text-white;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--color-accent-fill) 88%, black);
+  }
+  .btn-neutral {
+    @apply border border-line bg-surface text-ink-2;
+  }
+  .btn-neutral:hover:not(:disabled) {
+    @apply bg-elev text-ink;
+  }
+  .btn-ghost {
+    @apply text-ink-2;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    @apply bg-elev text-ink;
+  }
+  .btn-danger {
+    @apply bg-danger text-white;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--color-danger) 88%, black);
+  }
+  .btn-danger-soft {
+    @apply border border-danger/30 text-danger-ink;
+  }
+  .btn-danger-soft:hover:not(:disabled) {
+    @apply bg-danger-soft;
+  }
+  .btn-good {
+    @apply bg-good text-white;
+  }
+  .btn-good:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--color-good) 88%, black);
+  }
+  /* Square icon-only button. */
+  .icon-btn {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg
+           text-ink-3 transition-colors duration-150 hover:bg-elev hover:text-ink
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* ─── Form controls ─── */
+  .field-label {
+    @apply block text-xs font-semibold tracking-wide text-ink-3 uppercase;
+  }
+  .input,
+  .select,
+  .textarea {
+    @apply w-full rounded-xl border border-line bg-surface text-[14px] text-ink
+           transition-colors duration-150 outline-none
+           placeholder:text-ink-4 disabled:opacity-50;
+  }
+  .input,
+  .select {
+    @apply h-11 px-3.5;
+  }
+  .textarea {
+    @apply resize-none px-3.5 py-2.5 leading-relaxed;
+  }
+  .input:focus,
+  .select:focus,
+  .textarea:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent);
+    outline: none;
+  }
+  .select {
+    @apply cursor-pointer appearance-none bg-no-repeat pr-9;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235d6b80' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 0.7rem center;
+    background-size: 1rem;
+  }
+
+  /* ─── Tables ─── */
+  .tbl {
+    @apply w-full text-sm;
+  }
+  .tbl thead th {
+    @apply bg-elev/70 px-4 py-3 text-left text-[11px] font-semibold tracking-wider
+           text-ink-3 uppercase whitespace-nowrap;
+  }
+  .tbl tbody tr {
+    @apply border-t border-line-2 transition-colors duration-100;
+  }
+  .tbl tbody tr:hover {
+    background: var(--color-press);
+  }
+  .tbl td {
+    @apply px-4 py-3 align-middle;
+  }
+
+  /* ─── Misc ─── */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line
+           bg-elev px-2.5 py-1 text-xs font-medium text-ink-2;
+  }
+  .kbd {
+    @apply inline-flex h-5 min-w-5 items-center justify-center rounded border
+           border-line bg-surface px-1.5 font-mono text-[10px] font-medium text-ink-3;
+  }
+  .link {
+    @apply font-medium text-accent-ink underline-offset-2 hover:underline;
+  }
+  .skeleton {
+    @apply rounded-md bg-ink-4/20;
+    animation: pulse-soft 1.5s ease-in-out infinite;
+  }
+  .font-serif-display {
+    font-family: var(--font-serif);
+    letter-spacing: -0.015em;
+  }
+  .num {
+    @apply tabular-nums;
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Applied by the router view so a page change reads as a change. */
+.page-enter {
+  animation: rise-in 0.28s var(--ease-out) both;
 }

@@ -4,9 +4,19 @@ import { RouterLink } from 'vue-router';
 import { StatsApi, AuditApi, toApiError } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { useModerationStore } from '@/stores/moderation';
-import { auditLabel, label, shortClass, timeAgo, fmtNum, som, CHART_COLORS } from '@/lib/format';
-import UiKit from '@/components/UiKit.vue';
+import {
+  auditLabel, auditTone, label, tone, targetLabel, timeAgo, fmtNum, som, somFull,
+  fmtLongDay, fmtTime, delta, chartColor, USER_ROLES,
+} from '@/lib/format';
+import { readPref, writePref } from '@/lib/prefs';
+import PageHeader from '@/components/PageHeader.vue';
+import SectionCard from '@/components/SectionCard.vue';
 import StatCard from '@/components/StatCard.vue';
+import Skeleton from '@/components/Skeleton.vue';
+import EmptyState from '@/components/EmptyState.vue';
+import Spinner from '@/components/Spinner.vue';
+import Icon from '@/components/Icon.vue';
+import FilterTabs from '@/components/FilterTabs.vue';
 import TrendChart from '@/components/charts/TrendChart.vue';
 import DonutChart from '@/components/charts/DonutChart.vue';
 import FunnelBars from '@/components/charts/FunnelBars.vue';
@@ -16,39 +26,48 @@ const auth = useAuthStore();
 const moderation = useModerationStore();
 
 const loading = ref(true);
+const refreshing = ref(false);
 const stats = ref(null);
 const statsError = ref(null);
 const recent = ref([]);
+const fetchedAt = ref(null);
 
-const ICONS = {
-  users: 'M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8M12 8a4 4 0 100-8 4 4 0 000 8',
-  jobs: 'M3 7h18v13H3zM9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M3 12h18',
-  apps: 'M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9zM14 3v6h6M9 13h6M9 17h4',
-  money: 'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6',
-  company: 'M3 21h18M6 21V7l6-4 6 4v14M10 9h.01M14 9h.01M10 13h.01M14 13h.01M10 17h.01M14 17h.01',
-  talent: 'M12 2l2.4 7.4H22l-6 4.6 2.3 7.4L12 17l-6.3 4.4L8 14 2 9.4h7.6z',
-};
-
-async function loadStats() {
-  statsError.value = null;
-  try {
-    stats.value = await StatsApi.get();
-  } catch (e) {
-    statsError.value = toApiError(e, 'Statistika hozircha mavjud emas').message;
-    stats.value = null;
-  }
+// The 30-day series is always fetched; the range only decides how much of it
+// is drawn. Switching is instant and costs no request.
+const RANGES = [
+  { value: '7', label: '7 kun' },
+  { value: '14', label: '14 kun' },
+  { value: '30', label: '30 kun' },
+];
+const range = ref(String(readPref('dashboard.range', '30')));
+function setRange(v) {
+  range.value = v;
+  writePref('dashboard.range', v);
 }
 
-onMounted(async () => {
-  moderation.refresh();
-  await Promise.allSettled([
-    loadStats(),
-    AuditApi.list({}).then((res) => { recent.value = (res?.data ?? []).slice(0, 7); }).catch(() => {}),
+async function load({ silent = false } = {}) {
+  if (silent) refreshing.value = true;
+  statsError.value = null;
+  const [s] = await Promise.allSettled([
+    StatsApi.get(),
+    AuditApi.list({}).then((res) => { recent.value = (res?.data ?? []).slice(0, 8); }).catch(() => {}),
+    moderation.refresh({ force: true }),
   ]);
+  if (s.status === 'fulfilled') {
+    stats.value = s.value;
+    fetchedAt.value = new Date();
+  } else {
+    statsError.value = toApiError(s.reason, 'Statistika hozircha mavjud emas').message;
+    stats.value = null;
+  }
   loading.value = false;
-});
+  refreshing.value = false;
+}
 
-// ─── Derived views (all defensive) ───
+onMounted(() => load());
+
+// ─── Derived views (all defensive: a field the API stops sending must not
+//     take the page down with it) ───
 const s = computed(() => stats.value || {});
 const users = computed(() => s.value.users || {});
 const jobs = computed(() => s.value.jobs || {});
@@ -59,175 +78,255 @@ const talent = computed(() => s.value.talent || {});
 const funnel = computed(() => s.value.funnel || {});
 const ts = computed(() => s.value.timeseries || {});
 
+const signups = computed(() => (ts.value.signups_30d || []).map((p) => p.count ?? 0));
+const applications = computed(() => (ts.value.applications_30d || []).map((p) => p.count ?? 0));
+const days = computed(() => Number(range.value) || 30);
+const tail = (arr) => arr.slice(-days.value);
+
+/** Sum of the last `n` values ending `offset` buckets from the end. */
+function window7(arr, offset = 0) {
+  const end = arr.length - offset;
+  if (end < 7) return null;
+  return arr.slice(Math.max(0, end - 7), end).reduce((a, b) => a + b, 0);
+}
+const signupDelta = computed(() => delta(window7(signups.value), window7(signups.value, 7)));
+const appDelta = computed(() => delta(window7(applications.value), window7(applications.value, 7)));
+
 const trendSeries = computed(() => {
-  const signups = (ts.value.signups_30d || []).map((p) => p.count ?? 0);
-  const applications = (ts.value.applications_30d || []).map((p) => p.count ?? 0);
   const out = [];
-  if (signups.length) out.push({ label: 'Roʻyxatdan oʻtishlar', color: CHART_COLORS.accent, data: signups });
-  if (applications.length) out.push({ label: 'Arizalar', color: CHART_COLORS.info, data: applications });
+  if (signups.value.length) out.push({ label: 'Roʻyxatdan oʻtishlar', color: chartColor('accent'), data: tail(signups.value) });
+  if (applications.value.length) out.push({ label: 'Arizalar', color: chartColor('ai'), data: tail(applications.value) });
   return out;
 });
 const trendLabels = computed(() => {
   const src = ts.value.signups_30d?.length ? ts.value.signups_30d : ts.value.applications_30d || [];
-  return src.map((p) => p.date);
+  return tail(src).map((p) => p.date);
 });
 const hasTrend = computed(() => trendSeries.value.some((se) => se.data.length));
+const trendTotal = computed(() =>
+  trendSeries.value.map((se) => ({ label: se.label, value: se.data.reduce((a, b) => a + b, 0), color: se.color })),
+);
 
 const byRole = computed(() => users.value.by_role ?? users.value);
-const roleSegments = computed(() => [
-  { label: label('candidate'), value: byRole.value.candidate ?? users.value.candidates ?? 0, color: CHART_COLORS.neutral },
-  { label: label('employer'), value: byRole.value.employer ?? users.value.employers ?? 0, color: CHART_COLORS.accent },
-  { label: label('moderator'), value: byRole.value.moderator ?? users.value.moderators ?? 0, color: CHART_COLORS.info },
-  { label: label('admin'), value: byRole.value.admin ?? users.value.admins ?? 0, color: CHART_COLORS.ai },
-]);
+// Older payloads pluralise the role at the top level (`users.candidates`).
+const ROLE_LEGACY_KEY = { candidate: 'candidates', employer: 'employers', moderator: 'moderators', admin: 'admins' };
+// Colour by the role's tone, so a donut slice matches that role's StatusBadge.
+const roleSegments = computed(() =>
+  USER_ROLES.map((role) => ({
+    label: label(role),
+    value: byRole.value[role] ?? users.value[ROLE_LEGACY_KEY[role]] ?? 0,
+    color: chartColor(tone(role)),
+  })),
+);
 
 const funnelStages = computed(() => {
   const f = funnel.value;
   const rows = [
-    { key: 'job_views', label: 'Vakansiya koʻrishlari', color: CHART_COLORS.accent },
-    { key: 'applications_total', label: 'Arizalar', color: CHART_COLORS.info },
-    { key: 'shortlisted', label: 'Qisqa roʻyxat', color: '#6366f1' },
-    { key: 'interview', label: 'Suhbat', color: CHART_COLORS.ai },
-    { key: 'hired', label: 'Ishga olindi', color: CHART_COLORS.good },
+    { key: 'job_views', label: 'Vakansiya koʻrishlari', color: chartColor('accent') },
+    { key: 'applications_total', label: 'Arizalar', color: chartColor('info') },
+    { key: 'shortlisted', label: 'Qisqa roʻyxat', color: chartColor('warn') },
+    { key: 'interview', label: 'Suhbat', color: chartColor('ai') },
+    { key: 'hired', label: 'Ishga olindi', color: chartColor('good') },
   ];
   return rows.filter((r) => f[r.key] != null).map((r) => ({ label: r.label, value: f[r.key], color: r.color }));
 });
 const hasFunnel = computed(() => funnelStages.value.length > 0);
 
-const jobStages = computed(() => [
-  { label: label('active'), value: jobs.value.active ?? 0, color: CHART_COLORS.good },
-  { label: label('pending_review'), value: jobs.value.pending_review ?? 0, color: CHART_COLORS.warn },
-  { label: label('paused'), value: jobs.value.paused ?? 0, color: CHART_COLORS.neutral },
-  { label: label('closed'), value: jobs.value.closed ?? 0, color: CHART_COLORS.ink },
-]);
-
-const APP_COLORS = [CHART_COLORS.info, '#6366f1', CHART_COLORS.ai, CHART_COLORS.good, CHART_COLORS.warn, CHART_COLORS.neutral, CHART_COLORS.ink];
-const appStatusItems = computed(() =>
-  Object.entries(apps.value.by_status || {}).map(([k, v], i) => ({
-    label: label(k),
-    value: v ?? 0,
-    color: APP_COLORS[i % APP_COLORS.length],
-  })),
+// Both breakdowns colour a status through the same tone map the badges use, so
+// a bar can never disagree with the badge for that status — and the colour no
+// longer depends on the order the API happens to send the keys in.
+const JOB_STAGES = ['active', 'pending_review', 'draft', 'paused', 'closed', 'rejected'];
+const jobStages = computed(() =>
+  JOB_STAGES
+    .map((k) => ({ label: label(k), value: jobs.value[k] ?? 0, color: chartColor(tone(k)) }))
+    .filter((r) => r.value > 0),
 );
 
-// moderation quick-links
+const appStatusItems = computed(() =>
+  Object.entries(apps.value.by_status || {})
+    .filter(([, v]) => (v ?? 0) > 0)
+    .map(([k, v]) => ({ label: label(k), value: v ?? 0, color: chartColor(tone(k)) })),
+);
+
+// ─── Moderation queues ───
 const queues = computed(() => [
-  { key: 'jobs', title: 'Koʻrib chiqilayotgan vakansiyalar', count: moderation.counts.pending_jobs, to: { name: 'jobs' }, tone: 'warn',
-    icon: 'M3 7h18v13H3zM9 7V5a2 2 0 012-2h2a2 2 0 012 2v2' },
-  { key: 'verifications', title: 'Kutilayotgan tasdiqlashlar', count: moderation.counts.pending_verifications, to: { name: 'verifications' }, tone: 'info',
-    icon: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4' },
-  { key: 'reports', title: 'Ochiq shikoyatlar', count: moderation.counts.open_reports, to: { name: 'reports' }, tone: 'danger',
-    icon: 'M5 21V4M5 4h11l-2 4 2 4H5' },
+  {
+    key: 'jobs', title: 'Koʻrib chiqilayotgan vakansiyalar', hint: 'Tasdiqlashni kutmoqda',
+    count: moderation.counts.pending_jobs, to: { name: 'jobs' }, tone: 'warn', icon: 'briefcase',
+  },
+  {
+    key: 'verifications', title: 'Kutilayotgan tasdiqlashlar', hint: 'Hujjatlar tekshiruvi',
+    count: moderation.counts.pending_verifications, to: { name: 'verifications' }, tone: 'info', icon: 'shield',
+  },
+  {
+    key: 'reports', title: 'Ochiq shikoyatlar', hint: 'Foydalanuvchi murojaatlari',
+    count: moderation.counts.open_reports, to: { name: 'reports' }, tone: 'danger', icon: 'flag',
+  },
 ]);
-const TONE = { warn: 'bg-warn-soft text-warn', info: 'bg-info-soft text-info', danger: 'bg-warn-soft text-warn' };
+const TONE = {
+  warn: 'bg-warn-soft text-warn-ink',
+  info: 'bg-info-soft text-info-ink',
+  danger: 'bg-danger-soft text-danger-ink',
+};
+const LOG_TONE = {
+  good: 'bg-good-soft text-good-ink',
+  danger: 'bg-danger-soft text-danger-ink',
+  ai: 'bg-ai-soft text-ai-ink',
+  info: 'bg-info-soft text-info-ink',
+};
+const LOG_ICON = { good: 'check', danger: 'close', ai: 'star', info: 'edit' };
+
+const greeting = computed(() => {
+  const name = auth.user?.email ? auth.user.email.split('@')[0] : '';
+  return `Assalomu alaykum${name ? ', ' + name : ''}`;
+});
 </script>
 
 <template>
   <div class="space-y-6">
-    <div>
-      <h2 class="font-serif-display text-2xl text-ink">
-        Assalomu alaykum{{ auth.user?.email ? ', ' + auth.user.email.split('@')[0] : '' }}
-      </h2>
-      <p class="text-sm text-ink-3 mt-0.5">Platforma koʻrsatkichlari va moderatsiya navbatlari.</p>
-    </div>
+    <PageHeader :title="greeting" :description="`${fmtLongDay()} · platforma koʻrsatkichlari va moderatsiya navbatlari`">
+      <template #actions>
+        <FilterTabs :model-value="range" :options="RANGES" size="sm" @update:model-value="setRange" />
+        <button class="icon-btn" title="Yangilash" :disabled="refreshing" @click="load({ silent: true })">
+          <Spinner v-if="refreshing" :size="16" />
+          <Icon v-else name="refresh" :size="17" />
+        </button>
+      </template>
+      <template #meta>
+        <p v-if="fetchedAt" class="mt-1 text-xs text-ink-4">Yangilangan: {{ fmtTime(fetchedAt) }}</p>
+      </template>
+    </PageHeader>
 
-    <div v-if="loading" class="py-20 flex justify-center"><UiKit /></div>
+    <template v-if="loading">
+      <Skeleton variant="stats" :rows="6" />
+      <div class="grid gap-4 lg:grid-cols-3">
+        <div class="card p-5 lg:col-span-2"><Skeleton variant="chart" /></div>
+        <div class="card p-5"><Skeleton variant="list" :rows="4" /></div>
+      </div>
+    </template>
 
     <template v-else>
-      <!-- Stats unavailable notice -->
-      <div v-if="statsError" class="rounded-2xl border border-warn/25 bg-warn-soft/60 px-5 py-4 flex items-start gap-3">
-        <span class="h-8 w-8 rounded-xl bg-warn-soft text-warn flex items-center justify-center shrink-0">!</span>
-        <div class="flex-1">
-          <p class="text-sm text-ink-2">{{ statsError }}</p>
-          <button class="mt-1 text-sm font-medium text-accent hover:underline" @click="loadStats">Qayta urinish</button>
-        </div>
+      <!-- Stats unavailable -->
+      <div v-if="statsError" class="card">
+        <EmptyState
+          icon="alert"
+          tone="danger"
+          title="Statistikani yuklab boʻlmadi"
+          :hint="statsError"
+          action-label="Qayta urinish"
+          @action="load({ silent: true })"
+        />
       </div>
 
       <template v-if="stats">
-        <!-- KPI cards -->
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <StatCard :value="fmtNum(users.total ?? 0)" label="Foydalanuvchilar" tone="accent" :icon="ICONS.users"
-            :sub="`${fmtNum((users.new_7d ?? users.new_last_7d) ?? 0)} yangi · 7 kun`" :trend="(users.new_7d ?? users.new_last_7d) != null ? `+${fmtNum((users.new_7d ?? users.new_last_7d))}` : ''" />
-          <StatCard :value="fmtNum(jobs.active ?? 0)" label="Faol vakansiyalar" tone="good" :icon="ICONS.jobs"
-            :sub="`${fmtNum(jobs.pending_review ?? 0)} koʻrib chiqilmoqda`" />
-          <StatCard :value="fmtNum(apps.total ?? 0)" label="Arizalar" tone="info" :icon="ICONS.apps"
-            :sub="`${fmtNum((apps.new_7d ?? apps.new_last_7d) ?? 0)} yangi · 7 kun`" :trend="(apps.new_7d ?? apps.new_last_7d) != null ? `+${fmtNum((apps.new_7d ?? apps.new_last_7d))}` : ''" trendTone="info" />
-          <StatCard :value="som(subs.mrr ?? 0)" label="Oylik daromad (MRR)" tone="ai" :icon="ICONS.money"
-            :sub="`${som(subs.revenue_total ?? 0)} jami · ${fmtNum(subs.active_count ?? 0)} obuna`" />
-          <StatCard :value="fmtNum(companies.total ?? 0)" label="Kompaniyalar" tone="warn" :icon="ICONS.company"
-            :sub="`${fmtNum(companies.verified ?? 0)} tasdiqlangan`" />
-          <StatCard :value="fmtNum(talent.available_count ?? 0)" label="Mavjud mutaxassislar" tone="neutral" :icon="ICONS.talent"
-            sub="ish qidirmoqda" />
+        <!-- ─── KPI ─── -->
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <StatCard
+            :value="fmtNum(users.total ?? 0)" label="Foydalanuvchilar" tone="accent" icon="users"
+            :sub="`${fmtNum(users.new_last_7d ?? users.new_7d ?? 0)} ta yangi · 7 kun`"
+            :spark="signups" :delta="signupDelta" :to="{ name: 'users' }"
+          />
+          <StatCard
+            :value="fmtNum(jobs.active ?? 0)" label="Faol vakansiyalar" tone="good" icon="briefcase"
+            :sub="`${fmtNum(jobs.pending_review ?? 0)} ta koʻrib chiqilmoqda · ${fmtNum(jobs.total ?? 0)} jami`"
+            :to="{ name: 'jobs', query: { status: 'active' } }"
+          />
+          <StatCard
+            :value="fmtNum(apps.total ?? 0)" label="Arizalar" tone="ai" icon="file"
+            :sub="`${fmtNum(apps.new_last_7d ?? apps.new_7d ?? 0)} ta yangi · 7 kun`"
+            :spark="applications" :delta="appDelta"
+          />
+          <StatCard
+            :value="som(subs.mrr ?? 0)" label="Oylik daromad (MRR)" tone="info" icon="money"
+            :sub="`${somFull(subs.revenue_total ?? 0)} jami · ${fmtNum(subs.active_count ?? 0)} ta obuna`"
+            :to="auth.isAdmin ? { name: 'commerce' } : null"
+          />
+          <StatCard
+            :value="fmtNum(companies.total ?? 0)" label="Kompaniyalar" tone="warn" icon="building"
+            :sub="`${fmtNum(companies.verified ?? 0)} ta tasdiqlangan`"
+            :to="auth.isAdmin ? { name: 'companies' } : null"
+          />
+          <StatCard
+            :value="fmtNum(talent.available_count ?? 0)" label="Ish qidirayotgan mutaxassislar" tone="neutral" icon="star"
+            sub="faol yoki takliflarga ochiq"
+          />
         </div>
 
-        <!-- Growth + roles -->
+        <!-- ─── Growth + roles ─── -->
         <div class="grid gap-4 lg:grid-cols-3">
-          <section class="lg:col-span-2 rounded-2xl border border-line bg-surface p-5">
-            <h3 class="font-medium text-ink mb-3">Oʻsish · soʻnggi 30 kun</h3>
+          <SectionCard class="lg:col-span-2" :title="`Oʻsish · soʻnggi ${days} kun`">
+            <template #actions>
+              <span v-for="t in trendTotal" :key="t.label" class="text-xs text-ink-3">
+                <span class="font-semibold" :style="{ color: t.color }">{{ fmtNum(t.value) }}</span>
+                {{ t.label.toLowerCase() }}
+              </span>
+            </template>
             <TrendChart v-if="hasTrend" :series="trendSeries" :labels="trendLabels" />
-            <div v-else class="py-14 text-center text-sm text-ink-3">Vaqt qatori maʼlumotlari yoʻq</div>
-          </section>
-          <section class="rounded-2xl border border-line bg-surface p-5">
-            <h3 class="font-medium text-ink mb-3">Foydalanuvchilar tarkibi</h3>
-            <DonutChart :segments="roleSegments" center-label="jami foydalanuvchi" />
-          </section>
+            <p v-else class="py-14 text-center text-sm text-ink-3">Vaqt qatori maʼlumotlari yoʻq</p>
+          </SectionCard>
+
+          <SectionCard title="Foydalanuvchilar tarkibi">
+            <DonutChart :segments="roleSegments" center-label="jami" />
+          </SectionCard>
         </div>
 
-        <!-- Funnel + jobs/apps breakdown -->
+        <!-- ─── Funnel + breakdowns ─── -->
         <div class="grid gap-4 lg:grid-cols-3">
-          <section class="lg:col-span-2 rounded-2xl border border-line bg-surface p-5">
-            <h3 class="font-medium text-ink mb-4">Ariza voronkasi</h3>
+          <SectionCard class="lg:col-span-2" title="Ariza voronkasi" hint="Har bosqichda oldingisiga nisbatan qancha qolgani">
             <FunnelBars v-if="hasFunnel" :stages="funnelStages" />
-            <div v-else class="py-14 text-center text-sm text-ink-3">Voronka maʼlumotlari yoʻq</div>
-          </section>
+            <p v-else class="py-14 text-center text-sm text-ink-3">Voronka maʼlumotlari yoʻq</p>
+          </SectionCard>
+
           <div class="space-y-4">
-            <section class="rounded-2xl border border-line bg-surface p-5">
-              <h3 class="font-medium text-ink mb-3">Vakansiyalar holati</h3>
+            <SectionCard v-if="jobStages.length" title="Vakansiyalar holati">
               <BreakdownBars :items="jobStages" />
-            </section>
-            <section v-if="appStatusItems.length" class="rounded-2xl border border-line bg-surface p-5">
-              <h3 class="font-medium text-ink mb-3">Arizalar holati</h3>
+            </SectionCard>
+            <SectionCard v-if="appStatusItems.length" title="Arizalar holati">
               <BreakdownBars :items="appStatusItems" />
-            </section>
+            </SectionCard>
           </div>
         </div>
       </template>
 
-      <!-- Moderation quick-links -->
+      <!-- ─── Moderation queues ─── -->
       <div class="grid gap-4 sm:grid-cols-3">
-        <RouterLink v-for="c in queues" :key="c.key" :to="c.to"
-          class="rounded-2xl border border-line bg-surface p-5 hover:border-accent/40 hover:shadow-sm transition-all">
+        <RouterLink v-for="c in queues" :key="c.key" :to="c.to" class="card card-hover p-5">
           <div class="flex items-center justify-between">
-            <span class="h-10 w-10 rounded-xl flex items-center justify-center" :class="TONE[c.tone]">
-              <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path :d="c.icon" /></svg>
+            <span class="flex h-10 w-10 items-center justify-center rounded-xl" :class="TONE[c.tone]">
+              <Icon :name="c.icon" :size="19" />
             </span>
-            <svg viewBox="0 0 24 24" class="h-4 w-4 text-ink-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+            <Icon name="right" :size="16" class="text-ink-4" />
           </div>
-          <div class="mt-3 font-serif-display text-3xl text-ink">{{ fmtNum(c.count ?? 0) }}</div>
-          <div class="text-sm text-ink-3">{{ c.title }}</div>
+          <div class="mt-3.5 font-serif-display text-[30px] leading-none" :class="c.count ? 'text-ink' : 'text-ink-4'">
+            {{ fmtNum(c.count ?? 0) }}
+          </div>
+          <div class="mt-2 text-sm font-medium text-ink-2">{{ c.title }}</div>
+          <div class="mt-0.5 text-xs text-ink-3">{{ c.count ? c.hint : 'Navbat boʻsh' }}</div>
         </RouterLink>
       </div>
 
-      <!-- Recent activity -->
-      <div class="rounded-2xl border border-line bg-surface overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-4 border-b border-line">
-          <h3 class="font-medium text-ink">Soʻnggi amallar</h3>
-          <RouterLink :to="{ name: 'audit' }" class="text-sm text-accent hover:underline">Audit jurnali →</RouterLink>
-        </div>
-        <ul v-if="recent.length" class="divide-y divide-line">
-          <li v-for="log in recent" :key="log.id" class="flex items-center justify-between gap-3 px-5 py-3">
-            <div class="min-w-0">
-              <div class="text-sm font-medium text-ink">{{ auditLabel(log.action) }}</div>
-              <div class="text-xs text-ink-3">
+      <!-- ─── Recent activity ─── -->
+      <SectionCard title="Soʻnggi amallar" flush>
+        <template #actions>
+          <RouterLink :to="{ name: 'audit' }" class="link text-sm">Audit jurnali →</RouterLink>
+        </template>
+        <ul v-if="recent.length" class="divide-y divide-line-2">
+          <li v-for="log in recent" :key="log.id" class="flex items-center gap-3 px-5 py-3">
+            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" :class="LOG_TONE[auditTone(log.action)]">
+              <Icon :name="LOG_ICON[auditTone(log.action)]" :size="14" :stroke="2.2" />
+            </span>
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-sm font-medium text-ink">{{ auditLabel(log.action) }}</div>
+              <div class="truncate text-xs text-ink-3">
                 {{ log.actor ? label(log.actor.role) : 'Tizim' }}
-                · {{ shortClass(log.target_type) }}<span v-if="log.target_id"> #{{ log.target_id }}</span>
+                · {{ targetLabel(log.target_type) }}<span v-if="log.target_id"> #{{ log.target_id }}</span>
               </div>
             </div>
             <span class="shrink-0 text-xs text-ink-4">{{ timeAgo(log.created_at) }}</span>
           </li>
         </ul>
-        <div v-else class="px-5 py-10 text-center text-sm text-ink-3">Hozircha amallar yoʻq</div>
-      </div>
+        <p v-else class="px-5 py-10 text-center text-sm text-ink-3">Hozircha amallar yoʻq</p>
+      </SectionCard>
     </template>
   </div>
 </template>

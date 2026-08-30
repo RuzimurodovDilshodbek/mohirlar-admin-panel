@@ -5,7 +5,12 @@ import App from '@/App.vue';
 import { setUnauthorizedHandler } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
 import { toastErr } from '@/lib/toast';
+import { initTheme } from '@/lib/theme';
 import '@/style.css';
+
+// Stamp the palette before the first paint, so a dark-mode admin never sees a
+// white flash of the light theme on load.
+initTheme();
 
 const app = createApp(App);
 app.use(createPinia());

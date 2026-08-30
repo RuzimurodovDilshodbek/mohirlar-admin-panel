@@ -2,26 +2,33 @@
 import { ref, watch, computed } from 'vue';
 import { ReportsApi, toApiError } from '@/lib/api';
 import { useCursorList } from '@/lib/useCursorList';
-import { REPORT_ACTIONS, label, fmtDateTime, timeAgo } from '@/lib/format';
+import { useQuerySync } from '@/lib/useQuerySync';
+import { useModerationStore } from '@/stores/moderation';
+import { REPORT_ACTIONS, label, fmtDateTime, timeAgo, timeAgoShort } from '@/lib/format';
 import { toastOk, toastErr } from '@/lib/toast';
+import PageHeader from '@/components/PageHeader.vue';
 import DataState from '@/components/DataState.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 import FilterTabs from '@/components/FilterTabs.vue';
 import ModalDialog from '@/components/ModalDialog.vue';
-import UiKit from '@/components/UiKit.vue';
+import LoadMore from '@/components/LoadMore.vue';
+import Spinner from '@/components/Spinner.vue';
+import Icon from '@/components/Icon.vue';
 
 const list = useCursorList((params) => ReportsApi.list(params));
+const moderation = useModerationStore();
 const status = ref('open');
 
-const statusTabs = [
-  { value: 'open', label: label('open') },
+const statusTabs = computed(() => [
+  { value: 'open', label: label('open'), count: moderation.counts.open_reports || undefined, tone: 'danger' },
   { value: 'reviewing', label: label('reviewing') },
   { value: 'resolved', label: label('resolved') },
   { value: 'dismissed', label: label('dismissed') },
   { value: 'all', label: 'Barchasi' },
-];
+]);
 
 function reload() { list.load({ status: status.value }); }
+useQuerySync({ status }, { status: 'open' }, reload);
 watch(status, reload, { immediate: true });
 
 const selected = ref(null);
@@ -32,6 +39,14 @@ const actionTaken = ref('noted');
 const note = ref('');
 
 const isFinal = computed(() => ['resolved', 'dismissed'].includes(selected.value?.status));
+
+// The icon carries the reason at a glance, so a queue of thirty is scannable
+// without reading every line.
+const REASON_ICON = {
+  spam: 'ban', fake: 'alert', inappropriate: 'flag', harassment: 'alert',
+  discrimination: 'alert', scam: 'alert', duplicate: 'copy', other: 'info',
+};
+const SEVERE = ['scam', 'harassment', 'discrimination'];
 
 // ─── Who reported what ───
 // ReportResource carries `reporter: { uuid, full_name, role }` and
@@ -69,9 +84,9 @@ async function open(r) {
 function close() { if (!acting.value) selected.value = null; }
 
 function sync(updated) {
-  selected.value = updated;
   if (status.value !== 'all' && updated.status !== status.value) list.remove(updated.id);
   else list.patch(updated);
+  moderation.refresh({ force: true });
 }
 
 async function confirm() {
@@ -91,119 +106,139 @@ async function confirm() {
 
 <template>
   <div class="space-y-5">
+    <PageHeader
+      description="Foydalanuvchilardan kelgan murojaatlar. Har bir shikoyatga koʻrilgan chora bilan yopiladi va audit jurnaliga yoziladi."
+    />
+
     <FilterTabs v-model="status" :options="statusTabs" />
 
     <DataState
       :loading="list.loading.value" :error="list.error.value"
-      :empty="!list.items.value.length" empty-text="Shikoyatlar yoʻq" @retry="reload"
+      :empty="!list.items.value.length"
+      :empty-text="status === 'open' ? 'Ochiq shikoyat yoʻq' : 'Shikoyatlar topilmadi'"
+      empty-icon="flag" skeleton="list" @retry="reload"
     >
       <div class="space-y-2.5">
         <button
           v-for="r in list.items.value" :key="r.id"
-          class="w-full text-left rounded-2xl border border-line bg-surface p-4 hover:border-accent/40 transition-colors"
+          class="card card-hover w-full p-4 text-left"
           @click="open(r)"
         >
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
+          <div class="flex items-start gap-3">
+            <span
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+              :class="SEVERE.includes(r.reason) ? 'bg-danger-soft text-danger-ink' : 'bg-warn-soft text-warn-ink'"
+            >
+              <Icon :name="REASON_ICON[r.reason] || 'flag'" :size="17" />
+            </span>
+
+            <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span class="font-medium text-ink">{{ label(r.reason) }}</span>
-                <span class="text-xs text-ink-3 truncate">· {{ targetText(r) }}</span>
-                <StatusBadge v-if="r.target?.status" :value="r.target.status" :dot="false" />
+                <span class="truncate text-xs text-ink-3">· {{ targetText(r) }}</span>
+                <StatusBadge v-if="r.target?.status" :value="r.target.status" :dot="false" size="sm" />
               </div>
-              <p v-if="r.description" class="mt-0.5 text-sm text-ink-3 line-clamp-1">{{ r.description }}</p>
-              <div class="mt-1 text-xs text-ink-4 truncate">Shikoyatchi: {{ reporterText(r) }}</div>
+              <p v-if="r.description" class="mt-1 line-clamp-1 text-sm text-ink-2">{{ r.description }}</p>
+              <div class="mt-1 truncate text-xs text-ink-4">Shikoyatchi: {{ reporterText(r) }}</div>
             </div>
+
             <div class="shrink-0 text-right">
-              <StatusBadge :value="r.status" />
-              <div class="mt-1 text-[11px] text-ink-4">{{ timeAgo(r.created_at) }}</div>
+              <StatusBadge :value="r.status" size="sm" />
+              <div class="mt-1.5 text-[11px] text-ink-4">{{ timeAgoShort(r.created_at) }}</div>
             </div>
           </div>
         </button>
       </div>
 
-      <div v-if="list.nextCursor.value" class="mt-4 flex justify-center">
-        <button class="inline-flex items-center gap-2 rounded-xl border border-line bg-surface px-5 py-2.5 text-sm font-medium hover:bg-elev disabled:opacity-50"
-          :disabled="list.loadingMore.value" @click="list.loadMore()">
-          <UiKit v-if="list.loadingMore.value" class="!h-4 !w-4" /> Koʻproq yuklash
-        </button>
-      </div>
+      <LoadMore
+        :has-more="!!list.nextCursor.value" :loading="list.loadingMore.value"
+        :count="list.items.value.length" @more="list.loadMore()"
+      />
     </DataState>
 
-    <ModalDialog :open="!!selected" :title="selected ? label(selected.reason) : ''"
-      :subtitle="selected ? targetText(selected) : ''" @close="close">
-      <div v-if="selected" class="space-y-4">
-        <StatusBadge :value="selected.status" />
+    <ModalDialog
+      :open="!!selected" :title="selected ? label(selected.reason) : ''"
+      :subtitle="selected ? targetText(selected) : ''"
+      size="lg" :dismissible="!acting" @close="close"
+    >
+      <div v-if="selected" class="space-y-5">
+        <div class="flex flex-wrap items-center gap-2">
+          <StatusBadge :value="selected.status" />
+          <span class="ml-auto text-xs text-ink-4">{{ timeAgo(selected.created_at) }}</span>
+        </div>
 
-        <div v-if="loadingDetail" class="py-6 flex justify-center"><UiKit /></div>
+        <div v-if="loadingDetail" class="flex justify-center py-8"><Spinner /></div>
         <template v-else>
-          <dl class="grid gap-3 sm:grid-cols-2 text-sm rounded-xl border border-line bg-elev/40 px-4 py-3">
+          <dl class="panel grid gap-3 px-4 py-3 text-sm sm:grid-cols-2">
             <div class="min-w-0">
-              <dt class="text-ink-3 text-xs">Shikoyatchi</dt>
-              <dd class="text-ink font-medium break-words">{{ reporterText(selected) }}</dd>
+              <dt class="text-xs text-ink-3">Shikoyatchi</dt>
+              <dd class="font-medium break-words text-ink">{{ reporterText(selected) }}</dd>
             </div>
             <div class="min-w-0">
-              <dt class="text-ink-3 text-xs">Shikoyat obyekti</dt>
-              <dd class="text-ink font-medium break-words">
+              <dt class="text-xs text-ink-3">Shikoyat obyekti</dt>
+              <dd class="font-medium break-words text-ink">
                 {{ targetText(selected) }}
-                <StatusBadge v-if="selected.target?.status" :value="selected.target.status" :dot="false" class="ml-1 align-middle" />
+                <StatusBadge v-if="selected.target?.status" :value="selected.target.status" :dot="false" size="sm" class="ml-1 align-middle" />
               </dd>
             </div>
           </dl>
 
           <section v-if="selected.description">
-            <h4 class="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-1">Shikoyat matni</h4>
-            <p class="text-sm text-ink-2 whitespace-pre-line">{{ selected.description }}</p>
+            <h4 class="field-label mb-1.5">Shikoyat matni</h4>
+            <p class="text-sm leading-relaxed whitespace-pre-line text-ink-2">{{ selected.description }}</p>
           </section>
 
           <section v-if="selected.evidence?.length">
-            <h4 class="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-1.5">Dalillar</h4>
+            <h4 class="field-label mb-1.5">Dalillar</h4>
             <ul class="space-y-1">
               <li v-for="(ev, i) in selected.evidence" :key="i">
-                <a :href="ev.url || ev" target="_blank" rel="noopener" class="text-sm text-accent hover:underline break-all">{{ ev.name || ev.url || ev }}</a>
+                <a :href="ev.url || ev" target="_blank" rel="noopener" class="link text-sm break-all">
+                  {{ ev.name || ev.url || ev }}
+                </a>
               </li>
             </ul>
           </section>
 
-          <div v-if="selected.action_taken" class="rounded-xl border border-line bg-elev/50 px-4 py-3 text-sm">
-            <span class="text-ink-3">Koʻrilgan chora:</span> <span class="text-ink font-medium">{{ label(selected.action_taken) }}</span>
+          <div v-if="selected.action_taken" class="panel px-4 py-3 text-sm">
+            <span class="text-ink-3">Koʻrilgan chora:</span>
+            <span class="font-medium text-ink">{{ label(selected.action_taken) }}</span>
             <p v-if="selected.reviewer_note" class="mt-1 text-ink-2">{{ selected.reviewer_note }}</p>
           </div>
 
-          <div class="text-xs text-ink-4 border-t border-line pt-3">Kelib tushgan: {{ fmtDateTime(selected.created_at) }}</div>
+          <div class="border-t border-line pt-3 text-xs text-ink-4">
+            Kelib tushgan: {{ fmtDateTime(selected.created_at) }}
+          </div>
 
-          <template v-if="mode === 'resolve'">
-            <label class="block">
-              <span class="text-xs font-semibold uppercase tracking-wide text-ink-3">Koʻrilgan chora</span>
-              <select v-model="actionTaken" class="mt-1.5 w-full h-11 rounded-xl border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-accent">
+          <div v-if="mode" class="space-y-3 rounded-xl p-4" :class="mode === 'resolve' ? 'border border-accent/25 bg-accent-soft/40' : 'border border-line bg-elev/60'">
+            <label v-if="mode === 'resolve'" class="block">
+              <span class="field-label">Koʻrilgan chora</span>
+              <select v-model="actionTaken" class="select mt-1.5">
                 <option v-for="a in REPORT_ACTIONS" :key="a" :value="a">{{ label(a) }}</option>
               </select>
             </label>
-          </template>
-          <label v-if="mode" class="block">
-            <span class="text-xs font-semibold uppercase tracking-wide text-ink-3">Izoh (ixtiyoriy)</span>
-            <textarea v-model="note" rows="3" maxlength="1500"
-              class="mt-1.5 w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent resize-none" />
-          </label>
+            <label class="block">
+              <span class="field-label">Izoh (ixtiyoriy)</span>
+              <textarea v-model="note" rows="3" maxlength="1500" class="textarea mt-1.5" placeholder="Ichki qayd — audit jurnaliga yoziladi" />
+            </label>
+          </div>
         </template>
       </div>
 
       <template #footer>
         <div v-if="!isFinal" class="flex justify-end gap-2">
           <template v-if="!mode">
-            <button class="rounded-xl border border-line px-4 py-2.5 text-sm font-medium hover:bg-elev" @click="mode='dismiss'">Rad etish</button>
-            <button class="rounded-xl bg-ink px-4 py-2.5 text-sm font-medium text-white hover:bg-ink/90" @click="mode='resolve'">Hal qilish</button>
+            <button class="btn btn-danger-soft" @click="mode = 'dismiss'">Rad etish</button>
+            <button class="btn btn-good" @click="mode = 'resolve'">Hal qilish</button>
           </template>
           <template v-else>
-            <button class="rounded-xl border border-line px-4 py-2.5 text-sm font-medium hover:bg-elev" :disabled="!!acting" @click="mode=''">Orqaga</button>
-            <button class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-              :class="mode === 'resolve' ? 'bg-ink hover:bg-ink/90' : 'bg-warn hover:bg-warn/90'"
-              :disabled="!!acting" @click="confirm">
-              <UiKit v-if="acting" class="!h-4 !w-4 !border-white/40 !border-t-white" />
+            <button class="btn btn-neutral" :disabled="!!acting" @click="mode = ''">Orqaga</button>
+            <button class="btn" :class="mode === 'resolve' ? 'btn-good' : 'btn-danger-soft'" :disabled="!!acting" @click="confirm">
+              <Spinner v-if="acting" :size="16" :on-fill="mode === 'resolve'" />
               {{ mode === 'resolve' ? 'Tasdiqlash' : 'Rad etish' }}
             </button>
           </template>
         </div>
-        <div v-else class="text-sm text-ink-3 text-center">Bu shikoyat allaqachon yopilgan.</div>
+        <p v-else class="text-center text-sm text-ink-3">Bu shikoyat allaqachon yopilgan.</p>
       </template>
     </ModalDialog>
   </div>

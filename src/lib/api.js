@@ -66,16 +66,25 @@ export function toApiError(err, fallback) {
         .join('; ')
     : '';
 
-  const base =
-    e?.message ||
-    (fields ? 'Maʼlumotlar notoʻgʻri' : body?.message) ||
-    fallback ||
-    (status === 0 ? 'Tarmoq xatosi — ulanishni tekshiring' : 'Nimadir xato ketdi');
+  // A 500 in debug mode answers with the raw exception — an SQLSTATE dump with
+  // the connection string in it was being printed straight onto the dashboard.
+  // Never show that: it is noise to the admin and a leak to anyone else.
+  const raw = e?.message || body?.message || '';
+  const isServerDump = status >= 500 || /^SQLSTATE|Undefined |Call to a member|::class/i.test(raw);
+
+  const base = isServerDump
+    ? fallback || 'Server xatosi — birozdan soʻng qayta urinib koʻring'
+    : e?.message ||
+      (fields ? 'Maʼlumotlar notoʻgʻri' : body?.message) ||
+      fallback ||
+      (status === 0 ? 'Tarmoq xatosi — ulanishni tekshiring' : 'Nimadir xato ketdi');
+
+  if (isServerDump && raw) console.error('[api]', status, raw);
 
   return {
     status,
     code: e?.code ?? (fields ? 'validation' : status === 0 ? 'network' : 'unknown'),
-    message: fieldText ? `${base} — ${fieldText}` : base,
+    message: fieldText && !isServerDump ? `${base} — ${fieldText}` : base,
     details: e?.details ?? fields,
     fields,
   };

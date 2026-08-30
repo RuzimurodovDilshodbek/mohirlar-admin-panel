@@ -1,44 +1,74 @@
 <script setup>
-// KPI stat card — icon chip, big value, label, optional sub/trend line.
-defineProps({
+import { computed } from 'vue';
+import Icon from '@/components/Icon.vue';
+import Sparkline from '@/components/Sparkline.vue';
+import { chartColor } from '@/lib/format';
+
+// KPI card — icon chip, big value, label, optional sub-line, optional 30-day
+// spark and a period-over-period delta. `to` turns the whole card into a link
+// so a number the admin cares about is one click from the list behind it.
+const props = defineProps({
   label: { type: String, required: true },
   value: { type: [String, Number], default: '—' },
   sub: { type: String, default: '' },
-  icon: { type: String, default: '' }, // SVG path `d`
-  tone: { type: String, default: 'accent' }, // accent | info | ai | warn | good | neutral
-  trend: { type: String, default: '' }, // e.g. "+12" — shown as a soft pill
-  trendTone: { type: String, default: 'good' },
+  icon: { type: String, default: '' },
+  tone: { type: String, default: 'accent' }, // accent | info | ai | warn | good | danger | neutral
+  spark: { type: Array, default: () => [] },
+  // { pct: number|null, dir: 'up'|'down'|'flat' } — see format.delta()
+  delta: { type: Object, default: null },
+  // `true` when a rise is bad news (open reports, failed payments).
+  invertDelta: { type: Boolean, default: false },
+  to: { type: [String, Object], default: null },
 });
 
 const TONE = {
   accent: 'bg-accent-soft text-accent-ink',
-  info: 'bg-info-soft text-info',
-  ai: 'bg-ai-soft text-ai',
-  warn: 'bg-warn-soft text-warn',
-  good: 'bg-good-soft text-good',
+  info: 'bg-info-soft text-info-ink',
+  ai: 'bg-ai-soft text-ai-ink',
+  warn: 'bg-warn-soft text-warn-ink',
+  good: 'bg-good-soft text-good-ink',
+  danger: 'bg-danger-soft text-danger-ink',
   neutral: 'bg-elev text-ink-2',
 };
-const TREND = {
-  good: 'bg-good-soft text-good',
-  warn: 'bg-warn-soft text-warn',
-  info: 'bg-info-soft text-info',
-  neutral: 'bg-elev text-ink-3',
-};
+
+const sparkColor = computed(() => chartColor(props.tone === 'neutral' ? 'neutral' : props.tone));
+
+const deltaView = computed(() => {
+  const d = props.delta;
+  if (!d || d.dir === 'flat' || d.pct == null) return null;
+  const positive = props.invertDelta ? d.dir === 'down' : d.dir === 'up';
+  return {
+    text: `${d.pct > 0 ? '+' : ''}${d.pct}%`,
+    icon: d.dir === 'up' ? 'arrowUp' : 'arrowDown',
+    cls: positive ? 'bg-good-soft text-good-ink' : 'bg-danger-soft text-danger-ink',
+  };
+});
 </script>
 
 <template>
-  <div class="rounded-2xl border border-line bg-surface p-5 hover:shadow-sm transition-shadow">
-    <div class="flex items-center justify-between">
-      <span class="h-10 w-10 rounded-xl flex items-center justify-center" :class="TONE[tone]">
-        <svg v-if="icon" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor"
-          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path :d="icon" /></svg>
+  <component
+    :is="to ? 'RouterLink' : 'div'"
+    :to="to || undefined"
+    class="card block p-5"
+    :class="to ? 'card-hover' : ''"
+  >
+    <div class="flex items-start justify-between gap-3">
+      <span v-if="icon" class="flex h-10 w-10 items-center justify-center rounded-xl" :class="TONE[tone]">
+        <Icon :name="icon" :size="19" />
       </span>
-      <span v-if="trend" class="rounded-full px-2 py-0.5 text-[11px] font-semibold" :class="TREND[trendTone]">
-        {{ trend }}
-      </span>
+      <div class="flex items-center gap-2">
+        <Sparkline v-if="spark.length > 1" :data="spark" :color="sparkColor" class="text-ink-4" />
+        <span
+          v-if="deltaView"
+          class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold"
+          :class="deltaView.cls"
+        >
+          <Icon :name="deltaView.icon" :size="11" :stroke="2.4" />{{ deltaView.text }}
+        </span>
+      </div>
     </div>
-    <div class="mt-3 font-serif-display text-3xl text-ink leading-none">{{ value }}</div>
-    <div class="mt-1.5 text-sm text-ink-2 font-medium">{{ label }}</div>
-    <div v-if="sub" class="text-xs text-ink-3 mt-0.5">{{ sub }}</div>
-  </div>
+    <div class="mt-3.5 font-serif-display text-[30px] leading-none text-ink">{{ value }}</div>
+    <div class="mt-2 text-sm font-medium text-ink-2">{{ label }}</div>
+    <div v-if="sub" class="mt-0.5 text-xs text-ink-3">{{ sub }}</div>
+  </component>
 </template>
