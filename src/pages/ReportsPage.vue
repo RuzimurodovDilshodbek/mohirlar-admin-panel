@@ -11,6 +11,7 @@ import DataState from '@/components/DataState.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 import FilterTabs from '@/components/FilterTabs.vue';
 import ModalDialog from '@/components/ModalDialog.vue';
+import ReportedThread from '@/components/ReportedThread.vue';
 import LoadMore from '@/components/LoadMore.vue';
 import Spinner from '@/components/Spinner.vue';
 import Icon from '@/components/Icon.vue';
@@ -187,6 +188,17 @@ async function confirm() {
             <h4 class="field-label mb-1.5">Shikoyat matni</h4>
             <p class="text-sm leading-relaxed whitespace-pre-line text-ink-2">{{ selected.description }}</p>
           </section>
+
+          <!-- Only for a reported chat message: the backend fills
+               target.conversation_uuid, and it refuses any thread that carries
+               no report, so there is nothing to reach here that was not already
+               flagged by a user. -->
+          <ReportedThread
+            v-if="selected.target?.conversation_uuid"
+            :key="selected.id"
+            :uuid="selected.target.conversation_uuid"
+            :reported-id="selected.target.uuid"
+          />
 
           <section v-if="selected.evidence?.length">
             <h4 class="field-label mb-1.5">Dalillar</h4>

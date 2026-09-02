@@ -207,6 +207,20 @@ export const ReportsApi = {
   },
 };
 
+// ─── Reported conversations ───
+// Read-only, and only for a thread that already carries a report — the backend
+// refuses anything else and answers 404 either way, so a moderator cannot use
+// this to browse private correspondence. Every call is written to the audit log
+// against the moderator's account.
+export const ConversationsApi = {
+  show(uuid) {
+    return api.get(`/api/v1/admin/conversations/${uuid}`).then((r) => r.data.data);
+  },
+  messages(uuid, params) {
+    return api.get(`/api/v1/admin/conversations/${uuid}/messages`, { params }).then((r) => r.data);
+  },
+};
+
 // ─── Audit log ───
 // Historically a non-standard nested envelope `{ data: { data, next_cursor } }`.
 // Normalised here to `{ data, next_cursor }` and made resilient to the standard
